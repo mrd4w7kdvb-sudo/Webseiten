@@ -1,0 +1,48 @@
+{
+  "$schema": "https://schemas.wp.org/wp/6.5/theme.json",
+  "version": 2,
+  "settings": {
+    "appearanceTools": true,
+    "layout": { "contentSize": "760px", "wideSize": "1120px" },
+    "color": {
+      "palette": [
+        { "slug": "green", "name": "Grün", "color": "#2f5d3a" },
+        { "slug": "green-dark", "name": "Dunkelgrün", "color": "#1f3d27" },
+        { "slug": "rose", "name": "Rose", "color": "#b0465c" },
+        { "slug": "cream", "name": "Creme", "color": "#faf6ef" },
+        { "slug": "tint", "name": "Sand", "color": "#f1ece2" },
+        { "slug": "ink", "name": "Text", "color": "#2a2a26" },
+        { "slug": "white", "name": "Weiß", "color": "#ffffff" }
+      ]
+    },
+    "typography": {
+      "fontFamilies": [
+        { "slug": "body", "name": "Source Sans 3", "fontFamily": "\"Source Sans 3\", system-ui, sans-serif" },
+        { "slug": "heading", "name": "Fraunces", "fontFamily": "Fraunces, Georgia, serif" }
+      ]
+    }
+  },
+  "styles": {
+    "color": { "background": "var(--wp--preset--color--cream)", "text": "var(--wp--preset--color--ink)" },
+    "typography": { "fontFamily": "var(--wp--preset--font-family--body)", "fontSize": "18px", "lineHeight": "1.65" },
+    "spacing": { "blockGap": "1rem", "padding": { "left": "0", "right": "0" } },
+    "elements": {
+      "heading": {
+        "typography": { "fontFamily": "var(--wp--preset--font-family--heading)", "fontWeight": "600", "lineHeight": "1.15" },
+        "color": { "text": "var(--wp--preset--color--green-dark)" }
+      },
+      "link": { "color": { "text": "var(--wp--preset--color--rose)" } },
+      "button": {
+        "color": { "background": "var(--wp--preset--color--green)", "text": "#ffffff" },
+        "border": { "radius": "999px" },
+        "typography": { "fontWeight": "600" },
+        "spacing": { "padding": { "top": "12px", "bottom": "12px", "left": "22px", "right": "22px" } },
+        ":hover": { "color": { "background": "var(--wp--preset--color--green-dark)" } }
+      }
+    }
+  },
+  "templateParts": [
+    { "name": "header", "title": "Kopfzeile", "area": "header" },
+    { "name": "footer", "title": "Fußzeile", "area": "footer" }
+  ]
+}
