@@ -1,0 +1,33 @@
+# Start:  cd deploy && cp .env.example .env && (Werte anpassen) && docker compose up -d --build
+services:
+  server:
+    build: ..
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      GW_PUBLIC_URL: https://${GW_DOMAIN}
+    volumes:
+      - gw-data:/data
+    expose:
+      - "8080"
+
+  # Caddy holt automatisch ein Let's-Encrypt-Zertifikat und erzwingt HTTPS.
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      GW_DOMAIN: ${GW_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - server
+
+volumes:
+  gw-data:
+  caddy-data:
+  caddy-config:

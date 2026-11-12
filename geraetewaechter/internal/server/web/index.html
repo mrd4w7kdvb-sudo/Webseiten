@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Gerätewächter</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+<script src="app.js" defer></script>
+</head>
+<body>
+<div id="login" class="login hidden">
+  <form id="loginForm" class="card login-card">
+    <div class="brand brand-lg"><span class="logo"></span>Gerätewächter</div>
+    <p class="muted">Zentrale Geräteüberwachung</p>
+    <label>Benutzer<input name="username" autocomplete="username" required></label>
+    <label>Passwort<input name="password" type="password" autocomplete="current-password" required></label>
+    <button class="btn primary" type="submit">Anmelden</button>
+    <p id="loginError" class="error"></p>
+  </form>
+</div>
+
+<div id="app" class="layout hidden">
+  <aside class="sidebar">
+    <div class="brand"><span class="logo"></span>Gerätewächter</div>
+    <nav id="nav">
+      <a href="#/" data-nav="">Übersicht</a>
+      <a href="#/alarme" data-nav="alarme">Alarme <span id="navAlerts" class="pill hidden"></span></a>
+      <a href="#/kunden" data-nav="kunden">Kunden</a>
+      <a href="#/geraete" data-nav="geraete">Geräte</a>
+      <a href="#/regeln" data-nav="regeln">Alarmregeln</a>
+      <a href="#/kanaele" data-nav="kanaele">Benachrichtigungen</a>
+      <a href="#/einstellungen" data-nav="einstellungen">Einstellungen</a>
+    </nav>
+    <div class="sidebar-foot">
+      <span id="whoami" class="muted"></span>
+      <button id="logout" class="btn small ghost" type="button">Abmelden</button>
+    </div>
+  </aside>
+  <main id="main" class="main"></main>
+</div>
+
+<dialog id="dialog" class="dialog"><form id="dialogForm" method="dialog"></form></dialog>
+<div id="toast" class="toast hidden"></div>
+</body>
+</html>

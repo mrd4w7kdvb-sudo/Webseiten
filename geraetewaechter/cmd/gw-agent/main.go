@@ -1,0 +1,189 @@
+// gw-agent ist die lokale Sensor-Software des Gerätewächters.
+package main
+
+import (
+	"context"
+	"flag"
+	"fmt"
+	"log"
+	"os"
+
+	"github.com/kardianos/service"
+
+	"geraetewaechter/internal/agent"
+)
+
+const usage = `Gerätewächter-Agent %s
+
+Aufruf: gw-agent <befehl> [optionen]
+
+Befehle:
+  enroll --server URL --token SCHLÜSSEL [--name NAME] [--force]
+                Gerät beim Server registrieren
+  install       als Systemdienst einrichten (Windows-Dienst, systemd, launchd)
+  uninstall     Systemdienst entfernen
+  start | stop | restart | status
+                Systemdienst steuern
+  run           im Vordergrund ausführen (wird vom Dienst verwendet)
+  once          genau eine Meldung senden
+  preview       Meldung erzeugen und anzeigen, OHNE sie zu senden
+                (zur Kontrolle, welche Daten das Gerät verlassen würden)
+  paths         Pfade von Konfiguration und Kontrolldatei anzeigen
+  version       Version anzeigen
+`
+
+type program struct {
+	cancel context.CancelFunc
+	done   chan struct{}
+}
+
+func (p *program) Start(s service.Service) error {
+	cfg, err := agent.LoadConfig()
+	if err != nil {
+		return fmt.Errorf("Konfiguration %s: %w (zuerst 'gw-agent enroll' ausführen)", agent.ConfigPath(), err)
+	}
+	if cfg.AgentID == "" {
+		return fmt.Errorf("Gerät nicht registriert – zuerst 'gw-agent enroll' ausführen")
+	}
+	a, err := agent.New(cfg)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	p.cancel = cancel
+	p.done = make(chan struct{})
+	go func() {
+		defer close(p.done)
+		a.Run(ctx)
+	}()
+	return nil
+}
+
+func (p *program) Stop(s service.Service) error {
+	if p.cancel != nil {
+		p.cancel()
+		<-p.done
+	}
+	return nil
+}
+
+func newService() (service.Service, error) {
+	exe, _ := os.Executable()
+	cfg := &service.Config{
+		Name:        "geraetewaechter",
+		DisplayName: "Gerätewächter Agent",
+		Description: "Überwacht den Systemzustand und meldet ihn datensparsam an den Gerätewächter-Server.",
+		Executable:  exe,
+		Arguments:   []string{"run"},
+		Option: service.KeyValue{
+			"Restart":                "always",
+			"RestartSec":             30,
+			"OnFailure":              "restart",
+			"OnFailureDelayDuration": "30s",
+			"DelayedAutoStart":       true,
+			"KeepAlive":              true,
+			"RunAtLoad":              true,
+			"LogDirectory":           agent.DataDir(),
+		},
+	}
+	return service.New(&program{}, cfg)
+}
+
+func main() {
+	if len(os.Args) < 2 {
+		fmt.Printf(usage, agent.Version)
+		os.Exit(2)
+	}
+	cmd := os.Args[1]
+	args := os.Args[2:]
+
+	switch cmd {
+	case "enroll":
+		fs := flag.NewFlagSet("enroll", flag.ExitOnError)
+		server := fs.String("server", "", "Adresse des Servers, z.B. https://monitor.example.de")
+		token := fs.String("token", "", "Registrierungsschlüssel des Kunden")
+		name := fs.String("name", "", "Anzeigename (optional; Standard: kein Rechnername)")
+		force := fs.Bool("force", false, "auch neu registrieren, wenn bereits registriert")
+		allowHTTP := fs.Bool("allow-http", false, "unverschlüsseltes HTTP erlauben (nur zum Testen)")
+		_ = fs.Parse(args)
+		if *server == "" || *token == "" {
+			fmt.Fprintln(os.Stderr, "--server und --token sind erforderlich")
+			os.Exit(2)
+		}
+		if err := agent.Enroll(*server, *token, *name, *force, *allowHTTP); err != nil {
+			fmt.Fprintln(os.Stderr, "Fehler:", err)
+			os.Exit(1)
+		}
+	case "preview":
+		if err := agent.Preview(os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, "Fehler:", err)
+			os.Exit(1)
+		}
+	case "once":
+		cfg, err := agent.LoadConfig()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Fehler:", err)
+			os.Exit(1)
+		}
+		a, err := agent.New(cfg)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Fehler:", err)
+			os.Exit(1)
+		}
+		if err := a.Once(); err != nil {
+			fmt.Fprintln(os.Stderr, "Fehler:", err)
+			os.Exit(1)
+		}
+		fmt.Println("Meldung gesendet.")
+	case "paths":
+		fmt.Println("Konfiguration:  ", agent.ConfigPath())
+		fmt.Println("Arbeitsordner:  ", agent.DataDir())
+		fmt.Println("Kontrolldatei:  ", agent.DataDir()+string(os.PathSeparator)+"letzte-meldung.json")
+	case "version", "--version", "-v":
+		fmt.Println(agent.Version)
+	case "run":
+		svc, err := newService()
+		if err != nil {
+			log.Fatal(err)
+		}
+		if err := svc.Run(); err != nil {
+			log.Fatal(err)
+		}
+	case "install":
+		svc, err := newService()
+		if err != nil {
+			log.Fatal(err)
+		}
+		_ = svc.Stop()
+		_ = svc.Uninstall()
+		if err := svc.Install(); err != nil {
+			fmt.Fprintln(os.Stderr, "Installation fehlgeschlagen:", err)
+			os.Exit(1)
+		}
+		fmt.Println("Dienst installiert.")
+	case "uninstall", "start", "stop", "restart":
+		svc, err := newService()
+		if err != nil {
+			log.Fatal(err)
+		}
+		if err := service.Control(svc, cmd); err != nil {
+			fmt.Fprintln(os.Stderr, "Fehler:", err)
+			os.Exit(1)
+		}
+		fmt.Println("OK:", cmd)
+	case "status":
+		svc, err := newService()
+		if err != nil {
+			log.Fatal(err)
+		}
+		st, err := svc.Status()
+		if err != nil {
+			fmt.Println("Status: nicht installiert oder unbekannt")
+			os.Exit(1)
+		}
+		fmt.Println(map[service.Status]string{service.StatusRunning: "Status: läuft", service.StatusStopped: "Status: gestoppt"}[st])
+	default:
+		fmt.Printf(usage, agent.Version)
+		os.Exit(2)
+	}
+}

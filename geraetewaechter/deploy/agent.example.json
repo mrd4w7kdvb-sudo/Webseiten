@@ -1,0 +1,30 @@
+{
+  "server": "https://monitor.example.de",
+  "agent_id": "wird-bei-enroll-gesetzt",
+  "agent_key": "wird-bei-enroll-gesetzt",
+  "interval_seconds": 60,
+  "privacy": {
+    "send_hostname": false,
+    "system_log_mode": "redact",
+    "system_log_max_level": 4,
+    "deny_words": ["Sonnenhof", "Musterdorf"],
+    "deny_patterns": ["Tour-Nr\\.\\s*\\d+"],
+    "audit_file": true
+  },
+  "watch_processes": ["MediFox.exe"],
+  "watch_services": ["MSSQLSERVER"],
+  "app_logs": [
+    {
+      "name": "Pflegesoftware",
+      "path": "C:\\ProgramData\\Hersteller\\Logs\\*.log",
+      "mode": "metadata",
+      "max_level": 3
+    },
+    {
+      "name": "Herdenmanagement",
+      "path": "/var/log/herde/*.log",
+      "mode": "redact",
+      "max_level": 4
+    }
+  ]
+}

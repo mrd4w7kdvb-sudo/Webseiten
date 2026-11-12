@@ -1,0 +1,12 @@
+{$GW_DOMAIN} {
+	encode gzip
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		-Server
+	}
+	# Kein Zugriffslog: IP-Adressen der Kunden werden nicht gespeichert.
+	reverse_proxy server:8080 {
+		# Client-IP nur für den Schutz vor Passwort-Raten (wird gehasht, nicht gespeichert)
+		header_up X-Forwarded-For {remote_host}
+	}
+}
