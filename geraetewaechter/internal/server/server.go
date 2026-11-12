@@ -180,7 +180,6 @@ func (s *Server) routes() http.Handler {
 	// Öffentliche Downloads & Installationsskripte
 	mux.HandleFunc("GET /downloads/{file}", s.handleDownload)
 	mux.HandleFunc("GET /install.sh", s.handleInstallScript)
-	mux.HandleFunc("GET /install.ps1", s.handleInstallScript)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("ok")) })
 
 	// Anmeldung
@@ -201,6 +200,10 @@ func (s *Server) routes() http.Handler {
 	a("PUT /api/tenants/{id}", s.handleTenantSave)
 	a("DELETE /api/tenants/{id}", s.handleTenantDelete)
 	a("POST /api/tenants/{id}/rotate-token", s.handleTenantRotate)
+	a("POST /api/agents/{id}/approve", s.handleAgentApprove)
+	a("POST /api/totp/setup", s.handleTOTPSetup)
+	a("POST /api/totp/enable", s.handleTOTPEnable)
+	a("POST /api/totp/disable", s.handleTOTPDisable)
 	a("POST /api/tenants/{id}/apply-template", s.handleApplyTemplate)
 
 	a("GET /api/agents", s.handleAgentList)

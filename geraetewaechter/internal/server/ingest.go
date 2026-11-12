@@ -35,10 +35,17 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusBadRequest, "ungültig")
 		return
 	}
-	var tenantID int64
-	if err := s.db.QueryRow(`SELECT id FROM tenants WHERE enroll_token=?`, strings.TrimSpace(req.Token)).Scan(&tenantID); err != nil {
+	var tenantID, expires int64
+	var needApproval int
+	if err := s.db.QueryRow(`SELECT id, enroll_expires, require_approval FROM tenants WHERE enroll_token=?`, strings.TrimSpace(req.Token)).
+		Scan(&tenantID, &expires, &needApproval); err != nil {
 		s.limiter.fail("enroll" + key)
 		httpErr(w, http.StatusForbidden, "Registrierungsschlüssel ungültig")
+		return
+	}
+	if expires > 0 && time.Now().Unix() > expires {
+		s.limiter.fail("enroll" + key)
+		httpErr(w, http.StatusForbidden, "Registrierungsschlüssel abgelaufen – bitte in der Verwaltung neu erzeugen")
 		return
 	}
 	id := strings.ToLower(randomToken(12))
@@ -49,8 +56,8 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 	if name == "" {
 		name = osName + "-" + id[:6]
 	}
-	_, err := s.db.Exec(`INSERT INTO agents(id, tenant_id, display_name, key_hash, os, arch, agent_version, created_at)
-		VALUES(?,?,?,?,?,?,?,?)`, id, tenantID, name, sha256hex(agentKey), osName, short(req.Arch, 20), short(req.AgentVersion, 20), time.Now().Unix())
+	_, err := s.db.Exec(`INSERT INTO agents(id, tenant_id, display_name, key_hash, os, arch, agent_version, created_at, approved)
+		VALUES(?,?,?,?,?,?,?,?,?)`, id, tenantID, name, sha256hex(agentKey), osName, short(req.Arch, 20), short(req.AgentVersion, 20), time.Now().Unix(), 1-needApproval)
 	if err != nil {
 		httpErr(w, http.StatusInternalServerError, "Fehler")
 		return
@@ -74,8 +81,8 @@ func (s *Server) authAgent(r *http.Request) (*agentAuth, int) {
 	}
 	var hash string
 	var tenant int64
-	var disabled int
-	if err := s.db.QueryRow(`SELECT key_hash, tenant_id, disabled FROM agents WHERE id=?`, id).Scan(&hash, &tenant, &disabled); err != nil {
+	var disabled, approved int
+	if err := s.db.QueryRow(`SELECT key_hash, tenant_id, disabled, approved FROM agents WHERE id=?`, id).Scan(&hash, &tenant, &disabled, &approved); err != nil {
 		return nil, http.StatusUnauthorized
 	}
 	if !constEq(hash, sha256hex(key)) {
@@ -84,13 +91,22 @@ func (s *Server) authAgent(r *http.Request) (*agentAuth, int) {
 	if disabled != 0 {
 		return nil, http.StatusForbidden
 	}
+	if approved == 0 {
+		// Gerät noch nicht freigegeben: Lebenszeichen merken, Daten verwerfen.
+		_, _ = s.db.Exec(`UPDATE agents SET last_seen=? WHERE id=?`, time.Now().Unix(), id)
+		return nil, http.StatusLocked
+	}
 	return &agentAuth{id: id, tenantID: tenant}, 0
 }
 
 func (s *Server) handleReport(w http.ResponseWriter, r *http.Request) {
 	ag, code := s.authAgent(r)
 	if ag == nil {
-		httpErr(w, code, "nicht berechtigt")
+		msg := "nicht berechtigt"
+		if code == http.StatusLocked {
+			msg = "Gerät wartet auf Freigabe in der Verwaltung"
+		}
+		httpErr(w, code, msg)
 		return
 	}
 	var body io.Reader = io.LimitReader(r.Body, proto.MaxReportBodySize)

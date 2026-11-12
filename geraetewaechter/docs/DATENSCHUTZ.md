@@ -90,11 +90,14 @@ Der Server kann dem Agenten nur mitteilen: Meldeintervall und Namen von Programm
 
 ## 7. Sicherheit
 
-- Übertragung ausschließlich per HTTPS (TLS ≥ 1.2, Let's-Encrypt-Zertifikat); unverschlüsseltes HTTP wird vom Agenten abgelehnt (Ausnahme: localhost für Tests).
+Ausführlich in [SICHERHEIT.md](SICHERHEIT.md). Kurz:
+
+- Übertragung ausschließlich per HTTPS (TLS ≥ 1.2, Let's-Encrypt-Zertifikat); unverschlüsseltes HTTP wird vom Agenten abgelehnt (Ausnahme: localhost für Tests), die Zertifikatsprüfung ist nicht abschaltbar.
+- Registrierungsschlüssel mit Ablaufdatum, optionale Freigabe jedes neuen Geräts, Zwei-Faktor-Anmeldung für die Verwaltung.
 - Jedes Gerät hat einen eigenen 256-Bit-Schlüssel; der Server speichert nur dessen SHA-256-Hash. Geräte können einzeln deaktiviert oder gelöscht werden.
 - Registrierungsschlüssel je Kunde, jederzeit erneuerbar.
 - Agent-Konfiguration nur für SYSTEM/Administratoren bzw. root lesbar.
-- Installationsskripte prüfen die SHA-256-Prüfsumme des Agenten.
+- Installationsskripte prüfen die SHA-256-Prüfsumme des Agenten; Windows-Programme werden zusätzlich digital signiert (sobald das Zertifikat von Stockwerk IT vorliegt).
 - Weboberfläche: bcrypt-Passwörter, HttpOnly/Secure/SameSite-Strict-Cookies, CSRF-Schutz, strikte Content-Security-Policy, keine externen Ressourcen, Schutz gegen Passwort-Raten.
 
 ## 8. Empfehlungen für den Betrieb

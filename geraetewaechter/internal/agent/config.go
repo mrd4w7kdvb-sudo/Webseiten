@@ -47,17 +47,22 @@ type Privacy struct {
 
 // Config ist die lokale Agent-Konfiguration.
 type Config struct {
-	Server             string   `json:"server"`
-	AgentID            string   `json:"agent_id"`
-	AgentKey           string   `json:"agent_key"`
-	FingerprintSalt    string   `json:"fingerprint_salt"`
-	IntervalSeconds    int      `json:"interval_seconds"`
-	InsecureSkipVerify bool     `json:"insecure_skip_verify"`
-	AllowHTTP          bool     `json:"allow_http"`
-	Privacy            Privacy  `json:"privacy"`
-	WatchProcesses     []string `json:"watch_processes"`
-	WatchServices      []string `json:"watch_services"`
-	AppLogs            []AppLog `json:"app_logs"`
+	Server          string `json:"server"`
+	AgentID         string `json:"agent_id"`
+	AgentKey        string `json:"agent_key"`
+	FingerprintSalt string `json:"fingerprint_salt"`
+	IntervalSeconds int    `json:"interval_seconds"`
+	// CAFile: optionale PEM-Datei mit eigener Zertifizierungsstelle. Ist sie
+	// gesetzt, wird AUSSCHLIESSLICH diesen Zertifikaten vertraut (Pinning).
+	// Eine Möglichkeit, die Zertifikatsprüfung abzuschalten, gibt es bewusst nicht.
+	CAFile string `json:"ca_file,omitempty"`
+	// Proxy: optionaler HTTP(S)-Proxy, z.B. http://proxy.firma.local:3128
+	Proxy          string   `json:"proxy,omitempty"`
+	AllowHTTP      bool     `json:"allow_http"`
+	Privacy        Privacy  `json:"privacy"`
+	WatchProcesses []string `json:"watch_processes"`
+	WatchServices  []string `json:"watch_services"`
+	AppLogs        []AppLog `json:"app_logs"`
 }
 
 // DefaultConfig liefert sichere Voreinstellungen.

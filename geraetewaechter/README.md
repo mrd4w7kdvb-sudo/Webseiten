@@ -1,4 +1,4 @@
-# Gerätewächter
+# Gerätewächter (Stockwerk IT)
 
 Selbst gehostetes Monitoring für die Geräte deiner Kunden – zugeschnitten auf **mobile Pflegedienste** und **landwirtschaftliche Betriebe**. Datensparsam aufgebaut: Personenbezogene Daten werden schon auf dem Kundengerät entfernt.
 
@@ -31,7 +31,7 @@ Selbst gehostetes Monitoring für die Geräte deiner Kunden – zugeschnitten au
 
 ## Datenschutz in Kürze
 
-Ausführlich in [docs/DATENSCHUTZ.md](docs/DATENSCHUTZ.md).
+Ausführlich in [docs/DATENSCHUTZ.md](docs/DATENSCHUTZ.md), zur Sicherheit der Verbindung, zu Virenscannern und Code-Signierung siehe [docs/SICHERHEIT.md](docs/SICHERHEIT.md).
 
 - Feste Datenstruktur – Benutzernamen, Dateien, Kommandozeilen, Fenstertitel, Verbindungen, Standort usw. *können* gar nicht übertragen werden.
 - Bereinigung **auf dem Gerät** (und ein zweites Mal auf dem Server): Namen nach Anrede/Rolle („Frau Müller“, „Patient Hans Meier“), lokale Konten und deren Klarnamen, Rechnername, E-Mail, Telefon, IBAN, Krankenversicherten- und SV-Nummer, Geburtsdaten, Adressen/PLZ+Ort, IP/MAC, GPS-Koordinaten, Benutzerpfade, Dokument-/Bilddateinamen, Passwörter/Tokens, URL-Pfade.
@@ -53,6 +53,9 @@ docker compose up -d --build
 Danach `https://<deine-domain>` öffnen und anmelden. Ohne `GW_ADMIN_PASSWORD` erzeugt der Server beim ersten Start ein Passwort und schreibt es ins Log (`docker compose logs server`).
 
 Passwort zurücksetzen: `docker compose exec server gw-server passwd admin`
+Zwei-Faktor-Anmeldung abschalten (Handy verloren): `docker compose exec server gw-server totp-reset admin`
+
+Nach der ersten Anmeldung unter **Einstellungen → Zwei-Faktor-Anmeldung** einrichten.
 
 **Backup:** Das Volume `gw-data` (Datei `geraetewaechter.db`) sichern, z.B. per `docker compose exec server sh -c 'cp /data/geraetewaechter.db /data/backup.db'` und anschließend kopieren.
 
@@ -73,16 +76,19 @@ Passwort zurücksetzen: `docker compose exec server gw-server passwd admin`
 
 ## Kundengerät anbinden
 
-1. In der Oberfläche **Kunden → Neuer Kunde** anlegen (Branche wählen).
+1. In der Oberfläche **Kunden → Neuer Kunde** anlegen (Branche wählen, „Neue Geräte erst nach Freigabe annehmen“ bleibt an).
 2. Auf der Kundenseite den passenden Befehl kopieren und auf dem Gerät mit Administratorrechten ausführen:
-   - **Windows** (PowerShell als Administrator):
-     `& ([scriptblock]::Create((irm https://<domain>/install.ps1))) -Token <SCHLÜSSEL>`
+   - **Windows:** `gw-agent-windows_amd64.exe` über den Link herunterladen, dann in einer Eingabeaufforderung als Administrator:
+     `gw-agent-windows_amd64.exe setup --server https://<domain> --token <SCHLÜSSEL>`
+     (Alternativ zeigt die Kundenseite einen PowerShell-Zweizeiler ohne Browser.)
    - **Linux / Raspberry Pi / macOS:**
      `curl -fsSL https://<domain>/install.sh | sudo sh -s -- <SCHLÜSSEL>`
 
-   Das Skript lädt den Agenten, prüft die SHA-256-Prüfsumme, registriert das Gerät und startet den Dienst.
-3. Gerät in der Oberfläche umbenennen (Funktion statt Personenname, z.B. „Tour-Laptop 3“, „Melkstand-PC“).
+   `setup` kopiert das Programm an seinen festen Ort (`C:\Program Files\Geraetewaechter` bzw. `/usr/local/bin`), registriert das Gerät und richtet den Dienst ein. Das Linux/macOS-Skript prüft vorher die SHA-256-Prüfsumme.
+3. Gerät in der Oberfläche **freigeben** und umbenennen (Funktion statt Personenname, z.B. „Tour-Laptop 3“, „Melkstand-PC“).
 4. **Vorlage anwenden** auf der Kundenseite und Benachrichtigungskanal wählen.
+
+Registrierungsschlüssel sind standardmäßig 7 Tage gültig („Neu erzeugen“ auf der Kundenseite).
 
 ### Agent-Konfiguration beim Kunden
 
@@ -98,14 +104,17 @@ Der Ordner ist nur für SYSTEM/Administratoren bzw. root lesbar. Beispiel mit al
 - `privacy.deny_words`: Begriffe, die immer entfernt werden (z.B. Hofname, Ortsname, Namen häufiger Klienten).
 - `privacy.deny_patterns`: eigene reguläre Ausdrücke zum Entfernen.
 - `privacy.system_log_mode`: `redact` (Standard), `metadata` oder `off`.
+- `ca_file`: nur dieser Zertifizierungsstelle vertrauen (Pinning), `proxy`: Proxy des Kundennetzes – siehe [docs/SICHERHEIT.md](docs/SICHERHEIT.md).
 - `watch_processes` / `watch_services`: zusätzlich zu den zentral beim Kunden hinterlegten Namen.
 
-Befehle: `gw-agent preview | once | status | start | stop | restart | uninstall | paths | version`
+Befehle: `gw-agent setup | preview | once | status | start | stop | restart | uninstall | paths | version`
 
 ## Entwicklung
 
 ```bash
 make test     # Vet + Tests (u.a. Datenschutz-Filter)
+make winres   # Herstellerangaben „Stockwerk IT“ in die Windows-.exe einbetten (vor make agents)
+make sign SIGN="…"   # Windows-Agenten signieren, siehe docs/SICHERHEIT.md
 make run      # Server + alle Agenten bauen, Server lokal ohne HTTPS starten (admin / testpasswort123)
 ```
 

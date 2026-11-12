@@ -160,5 +160,32 @@ func openDB(path string) (*sql.DB, error) {
 	if _, err := db.Exec(schema); err != nil {
 		return nil, fmt.Errorf("schema: %w", err)
 	}
+	if err := migrate(db); err != nil {
+		return nil, fmt.Errorf("migration: %w", err)
+	}
 	return db, nil
+}
+
+// migrate ergänzt Spalten, die in späteren Versionen hinzugekommen sind.
+func migrate(db *sql.DB) error {
+	cols := []struct{ table, col, def string }{
+		{"tenants", "enroll_expires", "INTEGER NOT NULL DEFAULT 0"},
+		{"tenants", "require_approval", "INTEGER NOT NULL DEFAULT 0"},
+		{"agents", "approved", "INTEGER NOT NULL DEFAULT 1"},
+		{"users", "totp_secret", "TEXT NOT NULL DEFAULT ''"},
+		{"users", "totp_enabled", "INTEGER NOT NULL DEFAULT 0"},
+		{"users", "totp_last", "INTEGER NOT NULL DEFAULT 0"},
+	}
+	for _, c := range cols {
+		var n int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name=?`, c.table, c.col).Scan(&n); err != nil {
+			return err
+		}
+		if n == 0 {
+			if _, err := db.Exec(`ALTER TABLE ` + c.table + ` ADD COLUMN ` + c.col + ` ` + c.def); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

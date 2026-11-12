@@ -4,8 +4,9 @@ package agent
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
+
+	"golang.org/x/sys/windows"
 )
 
 func programData() string {
@@ -18,11 +19,32 @@ func programData() string {
 func baseConfigDir() string { return filepath.Join(programData(), "Geraetewaechter") }
 func baseDataDir() string   { return filepath.Join(programData(), "Geraetewaechter", "data") }
 
-// restrictPermissions entzieht normalen Benutzern den Lesezugriff auf den
-// Agenten-Schlüssel (nur SYSTEM und Administratoren).
+// restrictPermissions entzieht normalen Benutzern den Zugriff auf den
+// Agenten-Schlüssel: nur SYSTEM und Administratoren, Vererbung geschützt.
+// SetNamedSecurityInfo überträgt die Rechte auch auf vorhandene Dateien.
 func restrictPermissions(dir string) error {
-	return exec.Command("icacls", dir, "/inheritance:r",
-		"/grant:r", "*S-1-5-18:(OI)(CI)F", // SYSTEM
-		"/grant:r", "*S-1-5-32-544:(OI)(CI)F", // Administratoren
-	).Run()
+	sd, err := windows.SecurityDescriptorFromString("D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)")
+	if err != nil {
+		return err
+	}
+	dacl, _, err := sd.DACL()
+	if err != nil {
+		return err
+	}
+	return windows.SetNamedSecurityInfo(dir, windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, dacl, nil)
+}
+
+// InstallPath ist der Zielort des Agenten bei "gw-agent setup".
+func InstallPath() string {
+	pf := os.Getenv("ProgramFiles")
+	if pf == "" {
+		pf = `C:\Program Files`
+	}
+	return filepath.Join(pf, "Geraetewaechter", "gw-agent.exe")
+}
+
+// IsAdmin meldet, ob der Prozess mit Administratorrechten läuft.
+func IsAdmin() bool {
+	return windows.GetCurrentProcessToken().IsElevated()
 }

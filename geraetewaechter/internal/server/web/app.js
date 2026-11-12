@@ -18,7 +18,7 @@ async function api(method, path, body) {
   if (r.status === 401 && path !== '/api/login') { showLogin(); throw new Error('Bitte anmelden'); }
   let data = null;
   try { data = await r.json(); } catch (_) { /* leer */ }
-  if (!r.ok) throw new Error((data && data.error) || ('Fehler ' + r.status));
+  if (!r.ok) { const e = new Error((data && data.error) || ('Fehler ' + r.status)); e.data = data; throw e; }
   return data;
 }
 function toast(msg, err) {
@@ -78,6 +78,7 @@ const METRICS = {
 };
 
 function badgeOnline(a) {
+  if (!a.approved) return '<span class="badge warn">wartet auf Freigabe</span>';
   if (a.disabled) return '<span class="badge off">deaktiviert</span>';
   return a.online ? '<span class="badge ok">online</span>' : '<span class="badge crit">offline</span>';
 }
@@ -174,6 +175,7 @@ async function viewOverview() {
       <div class="tile ${o.alerts.kritisch ? 'crit' : 'ok'}"><div class="label">Kritische Alarme</div><div class="value">${o.alerts.kritisch}</div></div>
       <div class="tile ${o.alerts.warnung ? 'warn' : 'ok'}"><div class="label">Warnungen</div><div class="value">${o.alerts.warnung}</div></div>
       <div class="tile"><div class="label">Hinweise</div><div class="value">${o.alerts.info}</div></div>
+      ${o.pending ? `<div class="tile warn"><div class="label">Warten auf Freigabe</div><div class="value">${o.pending}</div><div class="sub"><a href="#/geraete">Geräte prüfen</a></div></div>` : ''}
     </div>
     <div class="card"><h2>Aktive Alarme</h2>${table(['Schwere', 'Regel', 'Kunde', 'Gerät', 'Seit', ''], alertRows(o.firing, true), 'Keine aktiven Alarme – alles in Ordnung.')}</div>
     <div class="card"><h2>Nicht erreichbare Geräte</h2>${table(['Gerät', 'Kunde', 'System', 'Zuletzt gesehen'], o.offline.map(a => `<tr>
@@ -204,7 +206,7 @@ async function viewTenants() {
       <td><a href="#/kunde/${t.id}"><strong>${esc(t.name)}</strong></a></td><td>${esc(BRANCH[t.branch] || t.branch)}</td>
       <td class="num">${t.agents}</td><td class="num">${t.online}</td>
       <td>${t.firing ? `<span class="badge crit">${t.firing}</span>` : '<span class="badge ok">0</span>'}</td><td>${esc(t.contact)}</td></tr>`), 'Noch keine Kunden angelegt.')}</div>`);
-  $('#newTenant').onclick = () => tenantDialog({ branch: 'pflege', interval_sec: 60, watch_processes: [], watch_services: [] });
+  $('#newTenant').onclick = () => tenantDialog({ require_approval: true, branch: 'pflege', interval_sec: 60, watch_processes: [], watch_services: [] });
 }
 function tenantDialog(t) {
   openDialog(`<h2>${t.id ? 'Kunde bearbeiten' : 'Neuer Kunde'}</h2>
@@ -217,10 +219,11 @@ function tenantDialog(t) {
     <label>Überwachte Programme (ein Prozessname pro Zeile)<textarea name="watch_processes" placeholder="z.B. MediFox.exe&#10;Vivendi.exe&#10;HerdeManager.exe">${esc((t.watch_processes || []).join('\n'))}</textarea></label>
     <label>Überwachte Dienste (Dienstname pro Zeile)<textarea name="watch_services" placeholder="z.B. MSSQLSERVER&#10;Spooler&#10;mosquitto">${esc((t.watch_services || []).join('\n'))}</textarea></label>
     <p class="hint">Der Server übermittelt dem Agenten nur diese Namen. Welche Log-Dateien gelesen werden und alle Datenschutz-Einstellungen legt ausschließlich die lokale Konfiguration beim Kunden fest.</p>
+    <label class="check"><input type="checkbox" name="require_approval" ${t.require_approval ? 'checked' : ''}> Neue Geräte erst nach Freigabe annehmen (empfohlen)</label>
     <label>Interne Notizen<textarea name="notes">${esc(t.notes)}</textarea></label>`,
   async fd => {
     const body = { name: fd.get('name'), branch: fd.get('branch'), interval_sec: +fd.get('interval_sec'), contact: fd.get('contact'),
-      notes: fd.get('notes'), watch_processes: lines(fd.get('watch_processes')), watch_services: lines(fd.get('watch_services')) };
+      notes: fd.get('notes'), require_approval: !!fd.get('require_approval'), watch_processes: lines(fd.get('watch_processes')), watch_services: lines(fd.get('watch_services')) };
     const r = t.id ? await api('PUT', '/api/tenants/' + t.id, body) : await api('POST', '/api/tenants', body);
     toast('Gespeichert');
     if (t.id) route(); else location.hash = '#/kunde/' + r.id;
@@ -244,9 +247,13 @@ async function viewTenant(id) {
         <dt>Dienste</dt><dd>${t.watch_services.map(esc).join(', ') || '–'}</dd>
         <dt>Notizen</dt><dd>${esc(t.notes) || '–'}</dd></dl></div>
       <div class="card"><h2>Gerät hinzufügen</h2>
-        <p class="hint">Befehl auf dem Gerät des Kunden mit Administratorrechten ausführen. Der Agent wird heruntergeladen, per Prüfsumme verifiziert, registriert und als Dienst gestartet.</p>
-        <h3>Windows (PowerShell als Administrator)</h3>
-        <div class="cmd"><pre id="cmdWin">&amp; ([scriptblock]::Create((irm ${esc(url)}/install.ps1))) -Token ${esc(t.enroll_token)}</pre><button class="btn small" data-copy="cmdWin">Kopieren</button></div>
+        ${tokenState(t)}
+        <h3>Windows</h3>
+        <p class="hint">Agent herunterladen: <a href="${esc(url)}/downloads/gw-agent-windows_amd64.exe">64-Bit (Intel/AMD)</a> · <a href="${esc(url)}/downloads/gw-agent-windows_arm64.exe">ARM</a>, dann in einer <strong>Eingabeaufforderung als Administrator</strong> im Download-Ordner:</p>
+        <div class="cmd"><pre id="cmdWin">gw-agent-windows_amd64.exe setup --server ${esc(url)} --token ${esc(t.enroll_token)}</pre><button class="btn small" data-copy="cmdWin">Kopieren</button></div>
+        <p class="hint">Alternativ ohne Browser (PowerShell als Administrator):</p>
+        <div class="cmd"><pre id="cmdPs">Invoke-WebRequest ${esc(url)}/downloads/gw-agent-windows_amd64.exe -OutFile $env:TEMP\\gw-agent.exe
+&amp; $env:TEMP\\gw-agent.exe setup --server ${esc(url)} --token ${esc(t.enroll_token)}</pre><button class="btn small" data-copy="cmdPs">Kopieren</button></div>
         <h3>Linux / Raspberry Pi / macOS</h3>
         <div class="cmd"><pre id="cmdNix">curl -fsSL ${esc(url)}/install.sh | sudo sh -s -- ${esc(t.enroll_token)}</pre><button class="btn small" data-copy="cmdNix">Kopieren</button></div>
         <div class="actions"><span class="muted">Registrierungsschlüssel: <code>${esc(t.enroll_token)}</code></span><button class="btn small" id="rotate">Neu erzeugen</button></div>
@@ -259,10 +266,17 @@ async function viewTenant(id) {
       ${ruleTable(own)}
       ${global.length ? `<p class="hint">Zusätzlich gelten ${global.length} globale Regeln für alle Kunden.</p>` : ''}</div>`);
   bindCopy();
+  bindApprove(() => viewTenant(id));
   bindRuleButtons(() => viewTenant(id));
   $('#edit').onclick = () => tenantDialog(t);
   $('#del').onclick = () => confirmDo(`Kunde "${t.name}" mit allen Geräten, Messwerten und Regeln löschen?`, async () => { await api('DELETE', '/api/tenants/' + id); location.hash = '#/kunden'; });
-  $('#rotate').onclick = () => confirmDo('Neuen Registrierungsschlüssel erzeugen? Bereits registrierte Geräte bleiben verbunden, der alte Schlüssel wird ungültig.', async () => { await api('POST', `/api/tenants/${id}/rotate-token`); viewTenant(id); });
+  $('#rotate').onclick = () => {
+    const f = openDialog(`<h2>Neuen Registrierungsschlüssel erzeugen</h2>
+      <p>Der alte Schlüssel wird sofort ungültig. Bereits registrierte Geräte bleiben verbunden.</p>
+      <label>Gültig für<select name="days"><option value="1">1 Tag</option><option value="7" selected>7 Tage</option><option value="30">30 Tage</option><option value="0">unbegrenzt (nicht empfohlen)</option></select></label>`,
+    async fd => { await api('POST', `/api/tenants/${id}/rotate-token`, { days: +fd.get('days') }); toast('Neuer Schlüssel erzeugt'); viewTenant(id); });
+    $('button[type=submit]', f).textContent = 'Erzeugen';
+  };
   $('#newRule').onclick = () => ruleDialog({ kind: 'metric', enabled: true, op: '>', severity: 'warnung', tenant_id: t.id, channels: channels.filter(c => c.enabled).map(c => c.id), log_max_level: 3, log_count: 1, duration_min: 5 }, () => viewTenant(id));
   $('#applyTpl').onclick = () => {
     const key = $('#tpl').value;
@@ -276,6 +290,12 @@ async function viewTenant(id) {
     });
     $('button[type=submit]', f).textContent = 'Regeln anlegen';
   };
+}
+function tokenState(t) {
+  const now = Date.now() / 1000;
+  if (t.enroll_expires && t.enroll_expires < now) return '<p class="privacy-note">Der Registrierungsschlüssel ist <strong>abgelaufen</strong>. Für neue Geräte unten „Neu erzeugen“ wählen.</p>';
+  const exp = t.enroll_expires ? 'gültig bis ' + fmtTime(t.enroll_expires) : '<strong>unbegrenzt gültig</strong> – besser mit Ablaufdatum neu erzeugen';
+  return `<p class="hint">Befehl auf dem Gerät mit Administratorrechten ausführen. Der Agent wird registriert und als Dienst gestartet. Schlüssel ${exp}.${t.require_approval ? ' Neue Geräte erscheinen zuerst als „wartet auf Freigabe“.' : ''}</p>`;
 }
 function bindCopy() {
   $$('[data-copy]').forEach(b => b.onclick = async () => {
@@ -293,7 +313,12 @@ function agentTable(list, withTenant) {
     <td>${badgeOnline(a)}</td><td>${esc(OSNAME[a.os] || a.os)}<div class="muted">${esc(a.platform)} ${esc(a.platform_version)}</div></td>
     <td>${bar(a.cpu)}</td><td>${bar(a.mem)}</td><td>${bar(a.disk)}</td>
     <td>${a.firing ? `<span class="badge crit">${a.firing}</span>` : '<span class="badge ok">0</span>'}</td>
-    <td class="nowrap">${fmtAgo(a.last_seen)}</td></tr>`), 'Noch keine Geräte registriert.');
+    <td class="nowrap">${fmtAgo(a.last_seen)}${a.approved ? '' : `<div><button class="btn small primary" data-approve="${a.id}">Freigeben</button></div>`}</td></tr>`), 'Noch keine Geräte registriert.');
+}
+function bindApprove(reload) {
+  $$('[data-approve]').forEach(b => b.onclick = () => confirmDo('Gerät freigeben? Prüfe vorher, ob du die Installation auf diesem Gerät veranlasst hast (Kunde, Zeitpunkt, Betriebssystem).', async () => {
+    await api('POST', `/api/agents/${b.dataset.approve}/approve`); toast('Gerät freigegeben'); reload();
+  }));
 }
 let agentFilter = '';
 async function viewAgents() {
@@ -303,6 +328,7 @@ async function viewAgents() {
     const f = list.filter(a => !q || (a.display_name + ' ' + a.tenant_name + ' ' + a.os + ' ' + a.platform).toLowerCase().includes(q));
     $('#agentList').innerHTML = agentTable(f, true);
     applyBars($('#agentList'));
+    bindApprove(viewAgents);
   };
   setMain(`<div class="page-head"><div><h1>Geräte</h1><div class="muted">${list.filter(a => a.online).length} von ${list.length} online</div></div>
     <input id="filter" placeholder="Suchen …" value="${esc(agentFilter)}"></div><div class="card" id="agentList"></div>`);
@@ -323,7 +349,8 @@ async function viewAgent(id) {
   setMain(`<div class="page-head"><div><div class="muted"><a href="#/kunde/${a.tenant_id}">${esc(a.tenant_name)}</a> /</div>
       <h1>${esc(a.display_name)} ${badgeOnline(a)}</h1>
       <div class="muted">${esc(OSNAME[a.os] || a.os)} · ${esc(a.platform)} ${esc(a.platform_version)} · ${esc(a.arch)} · Agent ${esc(a.agent_version)} · zuletzt ${fmtAgo(a.last_seen)}</div></div>
-      <div class="actions"><button class="btn" id="edit">Bearbeiten</button><button class="btn danger" id="del">Entfernen</button></div></div>
+      <div class="actions">${a.approved ? '' : `<button class="btn primary" data-approve="${a.id}">Freigeben</button>`}<button class="btn" id="edit">Bearbeiten</button><button class="btn danger" id="del">Entfernen</button></div></div>
+    ${a.approved ? '' : '<div class="privacy-note">Dieses Gerät hat sich registriert, wurde aber noch nicht freigegeben. Bis zur Freigabe werden seine Meldungen verworfen.</div><p></p>'}
     <div class="tiles">
       <div class="tile"><div class="label">Prozessor</div><div class="value">${fmtPct(a.cpu)}</div><div class="sub">${latest('cpu.cores') ? latest('cpu.cores').value + ' Kerne' : ''}</div></div>
       <div class="tile"><div class="label">Arbeitsspeicher</div><div class="value">${fmtPct(a.mem)}</div><div class="sub">${latest('mem.used_bytes') ? fmtBytes(latest('mem.used_bytes').value) + ' von ' + fmtBytes(latest('mem.total_bytes')?.value) : ''}</div></div>
@@ -362,6 +389,7 @@ async function viewAgent(id) {
   $('#del').onclick = () => confirmDo('Gerät mit allen Messwerten und Logs entfernen? Der Agent auf dem Gerät muss danach neu registriert werden.', async () => { await api('DELETE', '/api/agents/' + id); location.hash = '#/kunde/' + a.tenant_id; });
   $$('[data-h]').forEach(b => b.onclick = () => { chartHours = +b.dataset.h; $$('[data-h]').forEach(x => x.classList.toggle('on', x === b)); loadCharts(id, d); });
   bindAck(() => viewAgent(id));
+  bindApprove(() => viewAgent(id));
   const reloadLogs = () => loadLogs(id);
   $('#lfLevel').onchange = e => { logFilter.max_level = +e.target.value; reloadLogs(); };
   $('#lfChan').onchange = e => { logFilter.channel = e.target.value; reloadLogs(); };
@@ -610,6 +638,7 @@ async function viewSettings() {
         <label>Aktuelles Passwort<input name="old" type="password" required autocomplete="current-password"></label>
         <label>Neues Passwort (mind. 10 Zeichen)<input name="new" type="password" required minlength="10" autocomplete="new-password"></label>
         <button class="btn primary" type="submit">Ändern</button></form></div>
+      <div class="card"><h2>Zwei-Faktor-Anmeldung</h2><div id="totpBox"></div></div>
       <div class="card"><h2>Speicherfristen</h2><dl class="kv">
         <dt>Messwerte</dt><dd>${ME.retention.metrics} Tage</dd>
         <dt>Logs</dt><dd>${ME.retention.logs} Tage</dd>
@@ -623,12 +652,49 @@ async function viewSettings() {
       <li>Software-Logs werden standardmäßig nur als Metadaten (ohne Text) übertragen.</li>
       <li>Der Server kann dem Agenten keine Befehle schicken und keine Dateien anfordern. Datenschutz-Einstellungen sind nur lokal änderbar.</li>
       <li>Auf jedem Gerät liegt die zuletzt gesendete Meldung lesbar zur Kontrolle (<code>letzte-meldung.json</code>); <code>gw-agent preview</code> zeigt eine Meldung vor dem Senden.</li>
-      <li>IP-Adressen der Kunden werden vom Server nicht protokolliert.</li></ul></div>`);
+      <li>IP-Adressen der Kunden werden vom Server nicht protokolliert.</li>
+      <li>Der Windows-Agent startet keine Hilfsprogramme (kein PowerShell); unter Linux läuft er in einer systemd-Sandbox mit Lesezugriff.</li></ul></div>`);
+  renderTOTP();
   $('#pwForm').onsubmit = async e => {
     e.preventDefault();
     const fd = new FormData(e.target);
     try { await api('POST', '/api/password', { old: fd.get('old'), new: fd.get('new') }); toast('Passwort geändert – bitte neu anmelden'); setTimeout(showLogin, 1200); }
     catch (err) { toast(err.message, true); }
+  };
+}
+
+function renderTOTP() {
+  const box = $('#totpBox');
+  if (ME.totp_enabled) {
+    box.innerHTML = `<p><span class="badge ok">aktiv</span> Die Anmeldung erfordert zusätzlich einen Code aus der Authenticator-App.</p>
+      <form id="totpOff" class="form"><label>Passwort<input name="password" type="password" required autocomplete="current-password"></label>
+      <label>Aktueller Code<input name="code" inputmode="numeric" required autocomplete="one-time-code"></label>
+      <button class="btn danger" type="submit">Abschalten</button></form>`;
+    $('#totpOff').onsubmit = async e => {
+      e.preventDefault(); const fd = new FormData(e.target);
+      try { await api('POST', '/api/totp/disable', { password: fd.get('password'), code: fd.get('code') }); ME.totp_enabled = false; toast('Zwei-Faktor-Anmeldung abgeschaltet'); renderTOTP(); }
+      catch (err) { toast(err.message, true); }
+    };
+    return;
+  }
+  box.innerHTML = `<p><span class="badge warn">nicht aktiv</span> Dringend empfohlen: Schützt die Verwaltung auch dann, wenn das Passwort bekannt wird.</p>
+    <button class="btn primary" id="totpStart">Einrichten</button>`;
+  $('#totpStart').onclick = async () => {
+    try {
+      const r = await api('POST', '/api/totp/setup');
+      box.innerHTML = `<ol>
+        <li>Authenticator-App öffnen (z.B. Microsoft Authenticator, Google Authenticator, Aegis, 2FAS) und „Schlüssel manuell eingeben“ wählen.</li>
+        <li>Konto: <strong>Gerätewächter</strong>, Schlüssel (zeitbasiert):<div class="cmd"><pre id="totpSecret">${esc(r.secret)}</pre><button class="btn small" data-copy="totpSecret">Kopieren</button></div>
+          <details><summary class="muted">Einrichtungslink (für Passwortmanager)</summary><div class="cmd"><pre id="totpUri">${esc(r.uri)}</pre><button class="btn small" data-copy="totpUri">Kopieren</button></div></details></li>
+        <li>Den angezeigten 6-stelligen Code eingeben:</li></ol>
+        <form id="totpOn" class="form"><label>Code<input name="code" inputmode="numeric" required autocomplete="one-time-code"></label><button class="btn primary" type="submit">Aktivieren</button></form>`;
+      bindCopy();
+      $('#totpOn').onsubmit = async e => {
+        e.preventDefault();
+        try { await api('POST', '/api/totp/enable', { code: new FormData(e.target).get('code') }); ME.totp_enabled = true; toast('Zwei-Faktor-Anmeldung aktiv'); renderTOTP(); }
+        catch (err) { toast(err.message, true); }
+      };
+    } catch (err) { toast(err.message, true); }
   };
 }
 
@@ -653,11 +719,19 @@ document.addEventListener('DOMContentLoaded', () => {
     e.preventDefault();
     const fd = new FormData(e.target);
     try {
-      await api('POST', '/api/login', { username: fd.get('username'), password: fd.get('password') });
+      await api('POST', '/api/login', { username: fd.get('username'), password: fd.get('password'), code: fd.get('code') || '' });
       $('#loginError').textContent = '';
       e.target.reset();
+      $('#codeRow').classList.add('hidden');
       start();
-    } catch (err) { $('#loginError').textContent = err.message; }
+    } catch (err) {
+      if (err.data && err.data.totp_required) {
+        $('#codeRow').classList.remove('hidden');
+        $('#loginForm [name=code]').focus();
+        if (!fd.get('code')) { $('#loginError').textContent = ''; return; }
+      }
+      $('#loginError').textContent = err.message;
+    }
   };
   $('#logout').onclick = async () => { try { await api('POST', '/api/logout'); } catch (_) { /* egal */ } showLogin(); };
   window.addEventListener('hashchange', () => { if (ME) route(); });

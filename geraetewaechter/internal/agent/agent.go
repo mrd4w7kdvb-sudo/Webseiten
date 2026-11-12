@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -81,8 +82,24 @@ func New(cfg *Config) (*Agent, error) {
 
 func httpClient(cfg *Config) *http.Client {
 	tr := http.DefaultTransport.(*http.Transport).Clone()
-	tr.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: cfg.InsecureSkipVerify} //nolint:gosec // nur bei ausdrücklicher Konfiguration
-	return &http.Client{Timeout: 30 * time.Second, Transport: tr}
+	tc := &tls.Config{MinVersion: tls.VersionTLS12}
+	if cfg.CAFile != "" {
+		pool := x509.NewCertPool()
+		pem, err := os.ReadFile(cfg.CAFile)
+		if err != nil || !pool.AppendCertsFromPEM(pem) {
+			log.Printf("ca_file %s nicht lesbar – Verbindungen werden abgelehnt", cfg.CAFile)
+		}
+		tc.RootCAs = pool // leerer Pool = keine Verbindung (sicherer Fehlerfall)
+	}
+	tr.TLSClientConfig = tc
+	if cfg.Proxy != "" {
+		if u, err := url.Parse(cfg.Proxy); err == nil {
+			tr.Proxy = http.ProxyURL(u)
+		}
+	}
+	// Keine Umleitungen folgen: der Agent spricht nur mit dem konfigurierten Server.
+	return &http.Client{Timeout: 30 * time.Second, Transport: tr,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 }
 
 func checkServerURL(raw string, allowHTTP bool) (string, error) {
@@ -210,7 +227,10 @@ func encode(rep *proto.Report) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-var errAuth = errors.New("Agent beim Server nicht (mehr) berechtigt")
+var (
+	errAuth    = errors.New("Agent beim Server nicht (mehr) berechtigt")
+	errPending = errors.New("Gerät wartet auf Freigabe in der Verwaltung")
+)
 
 func (a *Agent) post(body []byte) (*proto.ReportResponse, error) {
 	req, err := http.NewRequest(http.MethodPost, a.cfg.Server+"/agent/v1/report", bytes.NewReader(body))
@@ -227,6 +247,8 @@ func (a *Agent) post(body []byte) (*proto.ReportResponse, error) {
 	}
 	defer resp.Body.Close()
 	switch {
+	case resp.StatusCode == http.StatusLocked:
+		return nil, errPending
 	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
 		return nil, errAuth
 	case resp.StatusCode == http.StatusBadRequest:
@@ -255,7 +277,7 @@ func (a *Agent) Once() error {
 	a.flushQueue()
 	rr, err := a.post(body)
 	if err != nil {
-		if !errors.Is(err, errAuth) && !errors.Is(err, errBadReport) {
+		if !errors.Is(err, errAuth) && !errors.Is(err, errBadReport) && !errors.Is(err, errPending) {
 			enqueue(body)
 		}
 		_ = a.st.save()

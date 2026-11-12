@@ -2,6 +2,7 @@
 //
 //	gw-server                       Server starten (Konfiguration über GW_* Umgebungsvariablen)
 //	gw-server passwd <benutzer>     Admin anlegen bzw. Passwort setzen (liest Passwort von stdin)
+//	gw-server totp-reset <benutzer> Zwei-Faktor-Anmeldung abschalten (z.B. bei Handyverlust)
 package main
 
 import (
@@ -39,8 +40,23 @@ func main() {
 			}
 			fmt.Fprintln(os.Stderr, "Passwort gesetzt.")
 			return
+		case "totp-reset":
+			if len(os.Args) < 3 {
+				fmt.Fprintln(os.Stderr, "Aufruf: gw-server totp-reset <benutzer>")
+				os.Exit(2)
+			}
+			cfg.SkipBootstrap = true
+			s, err := server.New(cfg)
+			if err != nil {
+				log.Fatal(err)
+			}
+			if err := server.ResetTOTP(s.DB(), os.Args[2]); err != nil {
+				log.Fatal(err)
+			}
+			fmt.Fprintln(os.Stderr, "Zwei-Faktor-Anmeldung abgeschaltet.")
+			return
 		case "-h", "--help", "help":
-			fmt.Println("gw-server [passwd <benutzer>]  – Konfiguration siehe README (GW_* Variablen)")
+			fmt.Println("gw-server [passwd <benutzer> | totp-reset <benutzer>]  – Konfiguration siehe README (GW_* Variablen)")
 			return
 		}
 	}

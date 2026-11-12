@@ -18,13 +18,14 @@ esac
 case "$OS" in linux|darwin) ;; *) echo "Fehler: Betriebssystem $OS wird nicht unterstuetzt." >&2; exit 1 ;; esac
 
 BIN="gw-agent-${OS}_${ARCH}"
-DEST=/usr/local/bin/gw-agent
-TMP=$(mktemp)
+mkdir -p /usr/local/bin
+# Download nach /usr/local/bin (nicht /tmp, das oft "noexec" eingehaengt ist)
+TMP=/usr/local/bin/.gw-agent-download
 trap 'rm -f "$TMP" "$TMP.sums"' EXIT
 
 echo "Lade $BIN ..."
-curl -fsSL "$SERVER/downloads/$BIN" -o "$TMP"
-curl -fsSL "$SERVER/downloads/SHA256SUMS" -o "$TMP.sums"
+curl -fsSL --proto '=https' --tlsv1.2 "$SERVER/downloads/$BIN" -o "$TMP"
+curl -fsSL --proto '=https' --tlsv1.2 "$SERVER/downloads/SHA256SUMS" -o "$TMP.sums"
 EXPECTED=$(awk -v f="$BIN" '$2==f {print $1}' "$TMP.sums")
 if command -v sha256sum >/dev/null 2>&1; then
   ACTUAL=$(sha256sum "$TMP" | awk '{print $1}')
@@ -32,15 +33,8 @@ else
   ACTUAL=$(shasum -a 256 "$TMP" | awk '{print $1}')
 fi
 [ -n "$EXPECTED" ] && [ "$EXPECTED" = "$ACTUAL" ] || { echo "Fehler: Pruefsumme stimmt nicht - Abbruch." >&2; exit 1; }
+chmod 0755 "$TMP"
 
-mkdir -p /usr/local/bin
-[ -x "$DEST" ] && "$DEST" stop >/dev/null 2>&1 || true
-cp "$TMP" "$DEST"
-chmod 0755 "$DEST"
-
-"$DEST" enroll --server "$SERVER" --token "$TOKEN"
-"$DEST" install
-"$DEST" start
-echo
-echo "Fertig. Konfiguration (Datenschutz-Einstellungen):"
-"$DEST" paths
+# setup kopiert das Programm nach /usr/local/bin/gw-agent, registriert das
+# Geraet und richtet den Systemdienst ein.
+"$TMP" setup --server "$SERVER" --token "$TOKEN"

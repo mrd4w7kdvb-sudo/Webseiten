@@ -115,7 +115,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusTooManyRequests, "zu viele Versuche, bitte später erneut")
 		return
 	}
-	var req struct{ Username, Password string }
+	var req struct{ Username, Password, Code string }
 	if err := readJSON(r, &req, 4096); err != nil {
 		httpErr(w, http.StatusBadRequest, "ungültig")
 		return
@@ -134,6 +134,17 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		s.limiter.fail(ip)
 		httpErr(w, http.StatusUnauthorized, "Anmeldung fehlgeschlagen")
 		return
+	}
+	if s.totpEnabled(id) {
+		if strings.TrimSpace(req.Code) == "" {
+			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "Bestätigungscode erforderlich", "totp_required": true})
+			return
+		}
+		if !s.checkTOTP(id, req.Code) {
+			s.limiter.fail(ip)
+			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "Bestätigungscode falsch", "totp_required": true})
+			return
+		}
 	}
 	tok := randomToken(32)
 	exp := time.Now().Add(sessionTTL)
@@ -157,7 +168,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request, u *User) {
-	writeJSON(w, http.StatusOK, map[string]any{"user": u, "public_url": s.cfg.PublicURL,
+	writeJSON(w, http.StatusOK, map[string]any{"user": u, "public_url": s.cfg.PublicURL, "totp_enabled": s.totpEnabled(u.ID),
 		"retention": map[string]int{"metrics": s.cfg.MetricRetention, "logs": s.cfg.LogRetention, "alerts": s.cfg.AlertRetention}})
 }
 

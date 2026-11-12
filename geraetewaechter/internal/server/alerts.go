@@ -77,7 +77,7 @@ type scopeAgent struct {
 }
 
 func (s *Server) agentsInScope(r *Rule) ([]scopeAgent, error) {
-	q := `SELECT a.id, a.display_name, t.name, a.last_seen, t.interval_sec FROM agents a JOIN tenants t ON t.id=a.tenant_id WHERE a.disabled=0`
+	q := `SELECT a.id, a.display_name, t.name, a.last_seen, t.interval_sec FROM agents a JOIN tenants t ON t.id=a.tenant_id WHERE a.disabled=0 AND a.approved=1`
 	args := []any{}
 	if r.AgentID != nil {
 		q += ` AND a.id=?`

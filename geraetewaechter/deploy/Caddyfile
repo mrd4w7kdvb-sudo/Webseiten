@@ -4,6 +4,15 @@
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 		-Server
 	}
+	# Optional, empfohlen: Verwaltungsoberfläche nur aus dem eigenen Büro-/VPN-Netz.
+	# Die Agenten-Schnittstelle (/agent/*, /downloads/*, /install.sh) bleibt erreichbar.
+	# IP-Bereiche anpassen und die folgenden Zeilen einkommentieren:
+	# @admin {
+	#	not path /agent/* /downloads/* /install.sh /healthz
+	#	not remote_ip 203.0.113.0/24 10.8.0.0/24
+	# }
+	# respond @admin "Kein Zugriff" 403
+
 	# Kein Zugriffslog: IP-Adressen der Kunden werden nicht gespeichert.
 	reverse_proxy server:8080 {
 		# Client-IP nur für den Schutz vor Passwort-Raten (wird gehasht, nicht gespeichert)

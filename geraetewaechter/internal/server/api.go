@@ -20,6 +20,8 @@ type Tenant struct {
 	Contact        string   `json:"contact"`
 	Notes          string   `json:"notes"`
 	EnrollToken    string   `json:"enroll_token,omitempty"`
+	EnrollExpires  int64    `json:"enroll_expires"`
+	RequireApprov  bool     `json:"require_approval"`
 	IntervalSec    int      `json:"interval_sec"`
 	WatchProcesses []string `json:"watch_processes"`
 	WatchServices  []string `json:"watch_services"`
@@ -28,6 +30,9 @@ type Tenant struct {
 	Online         int      `json:"online"`
 	Firing         int      `json:"firing"`
 }
+
+// defaultTokenDays ist die Gültigkeit neuer Registrierungsschlüssel.
+const defaultTokenDays = 7
 
 var branches = map[string]bool{"pflege": true, "landwirtschaft": true, "sonstige": true}
 
@@ -60,11 +65,13 @@ func (s *Server) handleTenantList(w http.ResponseWriter, r *http.Request, _ *Use
 func (s *Server) loadTenant(id int64) (*Tenant, error) {
 	var t Tenant
 	var procs, svcs string
-	err := s.db.QueryRow(`SELECT id, name, branch, contact, notes, enroll_token, interval_sec, watch_processes, watch_services, created_at
-		FROM tenants WHERE id=?`, id).Scan(&t.ID, &t.Name, &t.Branch, &t.Contact, &t.Notes, &t.EnrollToken, &t.IntervalSec, &procs, &svcs, &t.CreatedAt)
+	var appr int
+	err := s.db.QueryRow(`SELECT id, name, branch, contact, notes, enroll_token, enroll_expires, require_approval, interval_sec, watch_processes, watch_services, created_at
+		FROM tenants WHERE id=?`, id).Scan(&t.ID, &t.Name, &t.Branch, &t.Contact, &t.Notes, &t.EnrollToken, &t.EnrollExpires, &appr, &t.IntervalSec, &procs, &svcs, &t.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
+	t.RequireApprov = appr != 0
 	t.WatchProcesses, t.WatchServices = jsonList(procs), jsonList(svcs)
 	return &t, nil
 }
@@ -103,16 +110,17 @@ func (s *Server) handleTenantSave(w http.ResponseWriter, r *http.Request, _ *Use
 	procs := toJSON(cleanList(t.WatchProcesses, 50, 80))
 	svcs := toJSON(cleanList(t.WatchServices, 50, 80))
 	if id, ok := pathInt(r, "id"); ok {
-		_, err := s.db.Exec(`UPDATE tenants SET name=?, branch=?, contact=?, notes=?, interval_sec=?, watch_processes=?, watch_services=? WHERE id=?`,
-			t.Name, t.Branch, short(t.Contact, 200), short(t.Notes, 2000), t.IntervalSec, procs, svcs, id)
+		_, err := s.db.Exec(`UPDATE tenants SET name=?, branch=?, contact=?, notes=?, interval_sec=?, watch_processes=?, watch_services=?, require_approval=? WHERE id=?`,
+			t.Name, t.Branch, short(t.Contact, 200), short(t.Notes, 2000), t.IntervalSec, procs, svcs, b2i(t.RequireApprov), id)
 		if err != nil {
 			httpErr(w, 500, err.Error())
 			return
 		}
 		t.ID = id
 	} else {
-		res, err := s.db.Exec(`INSERT INTO tenants(name, branch, contact, notes, enroll_token, interval_sec, watch_processes, watch_services, created_at)
-			VALUES(?,?,?,?,?,?,?,?,?)`, t.Name, t.Branch, short(t.Contact, 200), short(t.Notes, 2000), randomToken(24), t.IntervalSec, procs, svcs, time.Now().Unix())
+		res, err := s.db.Exec(`INSERT INTO tenants(name, branch, contact, notes, enroll_token, enroll_expires, require_approval, interval_sec, watch_processes, watch_services, created_at)
+			VALUES(?,?,?,?,?,?,?,?,?,?,?)`, t.Name, t.Branch, short(t.Contact, 200), short(t.Notes, 2000), randomToken(24),
+			time.Now().Add(defaultTokenDays*24*time.Hour).Unix(), b2i(t.RequireApprov), t.IntervalSec, procs, svcs, time.Now().Unix())
 		if err != nil {
 			httpErr(w, 500, err.Error())
 			return
@@ -142,7 +150,16 @@ func (s *Server) handleTenantRotate(w http.ResponseWriter, r *http.Request, _ *U
 		httpErr(w, 400, "id")
 		return
 	}
-	if _, err := s.db.Exec(`UPDATE tenants SET enroll_token=? WHERE id=?`, randomToken(24), id); err != nil {
+	var req struct {
+		Days int `json:"days"` // 0 = unbegrenzt gültig
+	}
+	req.Days = defaultTokenDays
+	_ = readJSON(r, &req, 1024)
+	var exp int64
+	if req.Days > 0 {
+		exp = time.Now().Add(time.Duration(min(req.Days, 365)) * 24 * time.Hour).Unix()
+	}
+	if _, err := s.db.Exec(`UPDATE tenants SET enroll_token=?, enroll_expires=? WHERE id=?`, randomToken(24), exp, id); err != nil {
 		httpErr(w, 500, err.Error())
 		return
 	}
@@ -168,6 +185,7 @@ type Agent struct {
 	CreatedAt       int64   `json:"created_at"`
 	LastSeen        int64   `json:"last_seen"`
 	Disabled        bool    `json:"disabled"`
+	Approved        bool    `json:"approved"`
 	Online          bool    `json:"online"`
 	CPU             float64 `json:"cpu"`
 	Mem             float64 `json:"mem"`
@@ -176,7 +194,7 @@ type Agent struct {
 }
 
 const agentSelect = `SELECT a.id, a.tenant_id, t.name, a.display_name, a.os, a.platform, a.platform_version, a.kernel, a.arch,
-	a.agent_version, a.uptime, a.created_at, a.last_seen, a.disabled, t.interval_sec,
+	a.agent_version, a.uptime, a.created_at, a.last_seen, a.disabled, a.approved, t.interval_sec,
 	COALESCE((SELECT value FROM latest l WHERE l.agent_id=a.id AND l.name='cpu.percent' AND l.labels=''), -1),
 	COALESCE((SELECT value FROM latest l WHERE l.agent_id=a.id AND l.name='mem.percent' AND l.labels=''), -1),
 	COALESCE((SELECT MAX(value) FROM latest l WHERE l.agent_id=a.id AND l.name='disk.percent'), -1),
@@ -187,13 +205,14 @@ func scanAgents(rows *sql.Rows, now time.Time) ([]Agent, error) {
 	out := []Agent{}
 	for rows.Next() {
 		var a Agent
-		var dis, interval int
+		var dis, appr, interval int
 		if err := rows.Scan(&a.ID, &a.TenantID, &a.TenantName, &a.DisplayName, &a.OS, &a.Platform, &a.PlatformVersion, &a.Kernel, &a.Arch,
-			&a.AgentVersion, &a.Uptime, &a.CreatedAt, &a.LastSeen, &dis, &interval, &a.CPU, &a.Mem, &a.Disk, &a.Firing); err != nil {
+			&a.AgentVersion, &a.Uptime, &a.CreatedAt, &a.LastSeen, &dis, &appr, &interval, &a.CPU, &a.Mem, &a.Disk, &a.Firing); err != nil {
 			return nil, err
 		}
 		a.Disabled = dis != 0
-		a.Online = a.LastSeen > max(onlineCutoff(now), now.Unix()-3*int64(interval))
+		a.Approved = appr != 0
+		a.Online = a.Approved && a.LastSeen > max(onlineCutoff(now), now.Unix()-3*int64(interval))
 		out = append(out, a)
 	}
 	return out, rows.Err()
@@ -303,6 +322,14 @@ func (s *Server) handleAgentUpdate(w http.ResponseWriter, r *http.Request, _ *Us
 		args = []any{name, dis, req.TenantID, r.PathValue("id")}
 	}
 	if _, err := s.db.Exec(q, args...); err != nil {
+		httpErr(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
+func (s *Server) handleAgentApprove(w http.ResponseWriter, r *http.Request, _ *User) {
+	if _, err := s.db.Exec(`UPDATE agents SET approved=1 WHERE id=?`, r.PathValue("id")); err != nil {
 		httpErr(w, 500, err.Error())
 		return
 	}
@@ -745,9 +772,10 @@ func (s *Server) handleAlertAck(w http.ResponseWriter, r *http.Request, u *User)
 
 func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request, _ *User) {
 	now := time.Now()
-	var tenants, agents, online, crit, warn, info int
+	var tenants, agents, online, pending, crit, warn, info int
 	_ = s.db.QueryRow(`SELECT COUNT(*) FROM tenants`).Scan(&tenants)
-	_ = s.db.QueryRow(`SELECT COUNT(*) FROM agents WHERE disabled=0`).Scan(&agents)
+	_ = s.db.QueryRow(`SELECT COUNT(*) FROM agents WHERE disabled=0 AND approved=1`).Scan(&agents)
+	_ = s.db.QueryRow(`SELECT COUNT(*) FROM agents WHERE approved=0`).Scan(&pending)
 	_ = s.db.QueryRow(`SELECT COUNT(*) FROM agents a JOIN tenants t ON t.id=a.tenant_id
 		WHERE a.disabled=0 AND a.last_seen > MAX(?, ? - 3*t.interval_sec)`, onlineCutoff(now), now.Unix()).Scan(&online)
 	_ = s.db.QueryRow(`SELECT
@@ -760,13 +788,13 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request, _ *User)
 		list, _ := scanAgents(rows, now)
 		rows.Close()
 		for _, a := range list {
-			if !a.Online {
+			if !a.Online && a.Approved {
 				offline = append(offline, a)
 			}
 		}
 	}
 	writeJSON(w, 200, map[string]any{
-		"tenants": tenants, "agents": agents, "online": online,
+		"tenants": tenants, "agents": agents, "online": online, "pending": pending,
 		"alerts": map[string]int{"kritisch": crit, "warnung": warn, "info": info},
 		"firing": firing, "offline": offline,
 	})

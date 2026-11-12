@@ -16,6 +16,7 @@
     <p class="muted">Zentrale Geräteüberwachung</p>
     <label>Benutzer<input name="username" autocomplete="username" required></label>
     <label>Passwort<input name="password" type="password" autocomplete="current-password" required></label>
+    <label id="codeRow" class="hidden">Bestätigungscode aus der Authenticator-App<input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="7" pattern="[0-9 ]*"></label>
     <button class="btn primary" type="submit">Anmelden</button>
     <p id="loginError" class="error"></p>
   </form>
