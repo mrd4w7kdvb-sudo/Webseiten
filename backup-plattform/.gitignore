@@ -1,0 +1,9 @@
+# Geheimnisse und kundenbezogene Daten gehören NICHT ins Repository
+server/.env
+healthchecks/.env
+wartung/config.env
+wartung/geheim/
+wartung/kunden/
+wartung/pakete/
+wartung/protokoll/
+agent/bin/*.exe

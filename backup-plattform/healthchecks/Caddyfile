@@ -1,0 +1,3 @@
+{$HC_DOMAIN} {
+	reverse_proxy healthchecks:8000
+}

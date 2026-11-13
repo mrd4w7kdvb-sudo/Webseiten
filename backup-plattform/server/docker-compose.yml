@@ -1,0 +1,43 @@
+# Backup-Server: zwei rest-server-Instanzen auf denselben Daten + Caddy für HTTPS
+#
+#   rest-server  öffentlich (über Caddy, Port 443): nur hinzufügen, jeder Zugang nur sein Repository
+#   rest-admin   nur im WireGuard-Netz: darf aufräumen/löschen, eigene Passwortdatei
+#
+# Start:  docker compose up -d      (Variablen kommen aus .env, Vorlage: env.example)
+
+services:
+  rest-server:
+    image: restic/rest-server:${REST_SERVER_VERSION:-0.13.0}
+    restart: unless-stopped
+    environment:
+      OPTIONS: "--append-only --private-repos"
+    volumes:
+      - /srv/backup/data:/data
+
+  rest-admin:
+    image: restic/rest-server:${REST_SERVER_VERSION:-0.13.0}
+    restart: unless-stopped
+    environment:
+      OPTIONS: "--htpasswd-file /admin/.htpasswd"
+    volumes:
+      - /srv/backup/data:/data
+      - /srv/backup/admin:/admin:ro
+    ports:
+      # nur auf der WireGuard-Adresse – niemals öffentlich freigeben
+      - "${WG_IP:-10.8.0.1}:8001:8000"
+
+  caddy:
+    image: caddy:${CADDY_VERSION:-2}
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:?DOMAIN in .env setzen}
+    ports:
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

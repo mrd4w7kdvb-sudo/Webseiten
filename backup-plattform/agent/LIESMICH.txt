@@ -1,0 +1,20 @@
+Backup-Agent - Installation auf einem PC
+========================================
+
+ACHTUNG: Dieser Ordner enthaelt Zugangsdaten und Schluessel. Nach der Installation
+vom USB-Stick und vom PC loeschen.
+
+1. Ordner auf den PC kopieren (z. B. C:\Temp\Paket).
+2. PowerShell als Administrator oeffnen und in den Ordner wechseln:
+     cd C:\Temp\Paket
+3. Installieren und gleich die erste Sicherung starten:
+     powershell -ExecutionPolicy Bypass -File .\install.ps1 -ErsteSicherung
+   Bei langsamer Leitung ohne -ErsteSicherung installieren; die Sicherung startet
+   dann zur geplanten Uhrzeit am Abend.
+4. In Healthchecks pruefen, dass fuer jede Datenklasse eine Meldung eingegangen ist.
+5. Paketordner loeschen.
+
+Datenbank-Export der Branchensoftware: Datei C:\ProgramData\BackupAgent\vorher-<klasse>.cmd
+anpassen. Sie laeuft vor jeder Sicherung dieser Klasse.
+
+Entfernen: powershell -ExecutionPolicy Bypass -File .\install.ps1 -Entfernen

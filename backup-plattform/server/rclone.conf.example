@@ -1,0 +1,17 @@
+# Vorlage für /root/.config/rclone/rclone.conf auf dem Backup-Server
+#
+# Zugangsschlüssel im IONOS-Portal anlegen (nur Rechte auf den Offsite-Bucket, keine Rechte
+# an Object-Lock-Einstellungen). Endpunkt und Region aus dem IONOS-Portal übernehmen –
+# möglichst ein anderer Standort als der Backup-Server (z. B. Server Frankfurt, S3 Berlin).
+#
+# Den Bucket vorher im Portal anlegen mit:
+#   - Versionierung: an
+#   - Object Lock: an, Standard-Aufbewahrung Compliance-Modus, 30 Tage
+
+[ionos]
+type = s3
+provider = IONOS
+access_key_id = HIER_ACCESS_KEY
+secret_access_key = HIER_SECRET_KEY
+region = eu-central-2
+endpoint = s3.eu-central-2.ionoscloud.com

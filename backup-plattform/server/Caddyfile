@@ -1,0 +1,4 @@
+# HTTPS mit automatischem Let's-Encrypt-Zertifikat (TLS-ALPN über Port 443)
+{$DOMAIN} {
+	reverse_proxy rest-server:8000
+}
