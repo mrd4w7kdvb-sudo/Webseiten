@@ -40,6 +40,8 @@ Ausführlich in [docs/DATENSCHUTZ.md](docs/DATENSCHUTZ.md), zur Sicherheit der V
 - Kontrolle für den Kunden: `gw-agent preview` zeigt eine Meldung, ohne sie zu senden; `letzte-meldung.json` enthält die zuletzt gesendete.
 - Keine IP-Protokollierung auf dem Server, automatische Löschfristen.
 
+> **Vor dem ersten Kundeneinsatz:** Checkliste in [docs/BETRIEB.md](docs/BETRIEB.md) abarbeiten (2FA, externer Wächter, externe Sicherung, Code-Signierung, AVV). Dort stehen auch Updates, Wiederherstellung und Notfälle.
+
 ## Server in der Cloud einrichten
 
 Voraussetzung: Linux-VM (z.B. Hetzner, IONOS, netcup, STRATO – Rechenzentrum in Deutschland empfohlen) mit Docker, eine Domain mit A-Record auf die VM, Ports 80/443 offen. 1 vCPU / 2 GB RAM reichen für mehrere hundert Geräte.
@@ -57,7 +59,7 @@ Zwei-Faktor-Anmeldung abschalten (Handy verloren): `docker compose exec server g
 
 Nach der ersten Anmeldung unter **Einstellungen → Zwei-Faktor-Anmeldung** einrichten.
 
-**Backup:** Das Volume `gw-data` (Datei `geraetewaechter.db`) sichern, z.B. per `docker compose exec server sh -c 'cp /data/geraetewaechter.db /data/backup.db'` und anschließend kopieren.
+**Backup:** täglich automatisch in `/data/backups`; jederzeit konsistent per `docker compose exec server gw-server backup /data/export.db`. Externe Sicherung siehe [docs/BETRIEB.md](docs/BETRIEB.md).
 
 ### Konfiguration (Umgebungsvariablen)
 
@@ -72,6 +74,8 @@ Nach der ersten Anmeldung unter **Einstellungen → Zwei-Faktor-Anmeldung** einr
 | `GW_LOG_RETENTION_DAYS` | 14 | Aufbewahrung Logs |
 | `GW_ALERT_RETENTION_DAYS` | 180 | Aufbewahrung behobener Alarme |
 | `GW_EVALUATE_SECONDS` | 30 | Prüfintervall der Alarmregeln |
+| `GW_BACKUP_KEEP` | 7 | Anzahl täglicher Datenbanksicherungen in `/data/backups` (0 = aus) |
+| `GW_HEARTBEAT_URL` | – | Lebenszeichen alle 5 Minuten an einen externen Wächter (z.B. healthchecks.io), der alarmiert, wenn der Server ausfällt |
 | `GW_COOKIE_SECURE` | `true` | nur für lokale Tests ohne HTTPS auf `false` |
 
 ## Kundengerät anbinden
