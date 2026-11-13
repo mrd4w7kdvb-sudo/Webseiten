@@ -1,0 +1,27 @@
+# EmsQuartier – Apache-Konfiguration (STRATO)
+Options -Indexes
+DirectoryIndex index.php
+
+# Interne Ordner und versteckte Dateien sperren
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteRule ^(inc|data)(/|$) - [F,L]
+  RewriteRule (^|/)\. - [F,L]
+  RewriteRule \.(md|sqlite|txt|log)$ - [F,L]
+  # Optional: HTTPS erzwingen (Kommentarzeichen entfernen, sobald SSL aktiv ist)
+  # RewriteCond %{HTTPS} off
+  # RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+</IfModule>
+
+<IfModule mod_headers.c>
+  Header always set X-Content-Type-Options "nosniff"
+  Header always set Referrer-Policy "same-origin"
+</IfModule>
+
+<IfModule mod_expires.c>
+  ExpiresActive On
+  ExpiresByType text/css "access plus 1 month"
+  ExpiresByType application/javascript "access plus 1 month"
+  ExpiresByType image/jpeg "access plus 1 month"
+  ExpiresByType font/woff2 "access plus 1 year"
+</IfModule>

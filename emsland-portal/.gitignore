@@ -1,0 +1,6 @@
+data/*.sqlite
+data/*.sqlite-*
+data/einrichtungscode.txt
+uploads/*
+!uploads/.htaccess
+!uploads/index.php
