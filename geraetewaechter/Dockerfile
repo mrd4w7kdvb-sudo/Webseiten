@@ -1,5 +1,5 @@
 # Baut Server und alle Agent-Varianten in einem Schritt.
-FROM golang:1.26-alpine AS build
+FROM golang:1.27-alpine AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -16,7 +16,7 @@ RUN mkdir -p /out/downloads && \
     done && \
     cd /out/downloads && sha256sum gw-agent-* > SHA256SUMS
 
-FROM alpine:3.20
+FROM alpine:3.23
 RUN apk add --no-cache ca-certificates tzdata && adduser -D -H -u 10001 gw && mkdir -p /data && chown gw /data
 COPY --from=build /out/gw-server /usr/local/bin/gw-server
 COPY --from=build /out/downloads /downloads

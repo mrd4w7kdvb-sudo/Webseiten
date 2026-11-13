@@ -84,14 +84,15 @@ jobs:
           exit 0
       - name: Testserver starten
         run: |
-          $env:GW_DATA_DIR = "$env:RUNNER_TEMP\data"
-          $env:GW_DOWNLOADS_DIR = "$env:RUNNER_TEMP\dl"
-          $env:GW_COOKIE_SECURE = 'false'
-          $env:GW_ADMIN_PASSWORD = $env:GW_TEST_PW
-          $env:GW_PUBLIC_URL = $env:URL
-          $env:GW_LISTEN = '127.0.0.1:8080'
-          Start-Process -FilePath (Resolve-Path dist\gw-server.exe).Path -RedirectStandardError "$env:RUNNER_TEMP\server.log" -WindowStyle Hidden
-          for ($i = 0; $i -lt 30; $i++) { try { Invoke-RestMethod "$env:URL/healthz" | Out-Null; break } catch { Start-Sleep 1 } }
+          # Über WMI starten: Prozesse aus einem Schritt beendet GitHub unter Windows am Schrittende.
+          $exe = (Resolve-Path dist\gw-server.exe).Path
+          $t = $env:RUNNER_TEMP
+          $cmd = "cmd.exe /c set GW_DATA_DIR=$t\data&& set GW_DOWNLOADS_DIR=$t\dl&& set GW_COOKIE_SECURE=false&& set GW_ADMIN_PASSWORD=$env:GW_TEST_PW&& set GW_PUBLIC_URL=$env:URL&& set GW_LISTEN=127.0.0.1:8080&& `"$exe`" > `"$t\server.log`" 2>&1"
+          $r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $cmd; CurrentDirectory = $t }
+          "WMI-Start: ReturnValue=$($r.ReturnValue) PID=$($r.ProcessId)"
+          $ok = $false
+          for ($i = 0; $i -lt 30; $i++) { try { Invoke-RestMethod "$env:URL/healthz" | Out-Null; $ok = $true; break } catch { Start-Sleep 1 } }
+          if (-not $ok) { Get-Content "$t\server.log" -ErrorAction SilentlyContinue; throw 'Testserver startet nicht' }
       - name: Installation wie beim Kunden (setup als Administrator)
         run: |
           $h = @{ 'X-GW-Request' = '1' }
@@ -186,7 +187,7 @@ jobs:
       - name: Sandbox bewerten
         run: |
           systemd-analyze security geraetewaechter --no-pager | tail -n 25
-          SCORE=$(systemd-analyze security geraetewaechter --no-pager | awk '/Overall exposure level/ {print $(NF-1)}')
+          SCORE=$(systemd-analyze security geraetewaechter --no-pager | grep -o 'Overall exposure level.*' | grep -oE '[0-9]+\.[0-9]+' | head -1)
           echo "Exposure: $SCORE"
           awk -v s="$SCORE" 'BEGIN { exit !(s <= 4.0) }'
       - name: Systemfehler erzeugen und Übertragung prüfen
