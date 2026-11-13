@@ -1,0 +1,270 @@
+name: Gerätewächter – Tests auf echten Systemen
+
+on:
+  push:
+    paths:
+      - "geraetewaechter/**"
+      - ".github/workflows/geraetewaechter.yml"
+  pull_request:
+    paths:
+      - "geraetewaechter/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: geraetewaechter
+
+env:
+  GW_TEST_PW: ci-passwort-123
+  URL: http://127.0.0.1:8080
+
+jobs:
+  test:
+    name: Tests, Schwachstellen, Cross-Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: geraetewaechter/go.mod
+          cache-dependency-path: geraetewaechter/go.sum
+      - name: Formatierung
+        run: test -z "$(gofmt -l .)" || (gofmt -l .; exit 1)
+      - name: Vet
+        run: go vet ./...
+      - name: Tests (mit Race-Detector)
+        run: go test -race -count=1 ./...
+      - name: Schwachstellen in Abhängigkeiten und Go (govulncheck)
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+      - name: Vet für alle Zielsysteme
+        run: |
+          for t in windows/amd64 windows/arm64 darwin/arm64 darwin/amd64 linux/arm64 linux/arm; do
+            GOOS=${t%/*} GOARCH=${t#*/} go vet ./internal/agent ./cmd/gw-agent
+          done
+      - name: Alle Agenten bauen
+        run: make agents && cat dist/downloads/SHA256SUMS
+
+  windows:
+    name: Windows – Dienst, Ereignisprotokoll, Defender
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: geraetewaechter
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: geraetewaechter/go.mod
+          cache-dependency-path: geraetewaechter/go.sum
+      - name: Bauen
+        run: |
+          go build -o dist\gw-server.exe .\cmd\gw-server
+          go build -trimpath -ldflags "-s -w -X geraetewaechter/internal/agent.Version=1.0.0" -o dist\gw-agent.exe .\cmd\gw-agent
+      - name: Herstellerangaben in der .exe
+        run: |
+          $vi = (Get-Item dist\gw-agent.exe).VersionInfo
+          $vi | Format-List CompanyName, ProductName, FileDescription, FileVersion, ProductVersion, LegalCopyright, OriginalFilename
+          if ($vi.CompanyName -ne 'Stockwerk IT') { throw "CompanyName fehlt: '$($vi.CompanyName)'" }
+          if ($vi.ProductName -ne 'Gerätewächter') { throw "ProductName falsch: '$($vi.ProductName)'" }
+      - name: Microsoft Defender – Scan des Agenten
+        run: |
+          $st = Get-MpComputerStatus -ErrorAction SilentlyContinue
+          if ($st) { "Defender aktiv: $($st.AntivirusEnabled), Echtzeitschutz: $($st.RealTimeProtectionEnabled), Signaturen: $($st.AntivirusSignatureVersion)" }
+          $mp = "$env:ProgramFiles\Windows Defender\MpCmdRun.exe"
+          if (-not (Test-Path $mp)) { "Defender-Kommandozeile nicht vorhanden – Scan übersprungen"; exit 0 }
+          & $mp -SignatureUpdate | Out-Null
+          & $mp -Scan -ScanType 3 -File (Resolve-Path dist\gw-agent.exe).Path -DisableRemediation
+          $rc = $LASTEXITCODE
+          "Scan-Ergebnis (0 = keine Bedrohung, 2 = Bedrohung): $rc"
+          if ($rc -eq 2) { throw 'Defender meldet den Agenten als Bedrohung!' }
+          exit 0
+      - name: Testserver starten
+        run: |
+          $env:GW_DATA_DIR = "$env:RUNNER_TEMP\data"
+          $env:GW_DOWNLOADS_DIR = "$env:RUNNER_TEMP\dl"
+          $env:GW_COOKIE_SECURE = 'false'
+          $env:GW_ADMIN_PASSWORD = $env:GW_TEST_PW
+          $env:GW_PUBLIC_URL = $env:URL
+          $env:GW_LISTEN = '127.0.0.1:8080'
+          Start-Process -FilePath (Resolve-Path dist\gw-server.exe).Path -RedirectStandardError "$env:RUNNER_TEMP\server.log" -WindowStyle Hidden
+          for ($i = 0; $i -lt 30; $i++) { try { Invoke-RestMethod "$env:URL/healthz" | Out-Null; break } catch { Start-Sleep 1 } }
+      - name: Installation wie beim Kunden (setup als Administrator)
+        run: |
+          $h = @{ 'X-GW-Request' = '1' }
+          Invoke-RestMethod -Method Post "$env:URL/api/login" -Headers $h -ContentType 'application/json' -Body (@{ username = 'admin'; password = $env:GW_TEST_PW } | ConvertTo-Json) -SessionVariable s | Out-Null
+          $t = Invoke-RestMethod -Method Post "$env:URL/api/tenants" -Headers $h -WebSession $s -ContentType 'application/json' -Body (@{ name = 'CI Pflegedienst'; branch = 'pflege'; interval_sec = 15; watch_services = @('EventLog'); watch_processes = @('lsass.exe') } | ConvertTo-Json)
+          & .\dist\gw-agent.exe setup --server $env:URL --token $t.enroll_token
+          if ($LASTEXITCODE -ne 0) { throw "setup fehlgeschlagen ($LASTEXITCODE)" }
+          if (-not (Test-Path "$env:ProgramFiles\Geraetewaechter\gw-agent.exe")) { throw 'Programm nicht installiert' }
+          $svc = Get-Service geraetewaechter
+          $svc | Format-List Name, DisplayName, Status, StartType
+          if ($svc.Status -ne 'Running') { throw 'Dienst läuft nicht' }
+      - name: Testereignis schreiben, Agent beobachten (keine Hilfsprogramme)
+        run: |
+          eventcreate /T ERROR /ID 999 /L APPLICATION /SO GWTest /D "CI-Testfehler: Synchronisation fuer Frau Schulze fehlgeschlagen, Rueckruf 0171/1234567, anna@beispiel.de"
+          $agentPid = (Get-CimInstance Win32_Service -Filter "Name='geraetewaechter'").ProcessId
+          "Agent-PID: $agentPid"
+          $children = @()
+          for ($i = 0; $i -lt 50; $i++) {
+            $children += Get-CimInstance Win32_Process -Filter "ParentProcessId=$agentPid" | Select-Object -ExpandProperty Name
+            Start-Sleep 1
+          }
+          $children = $children | Sort-Object -Unique
+          if ($children) { throw "Agent hat Hilfsprogramme gestartet: $($children -join ', ')" }
+          'Agent hat keine Hilfsprogramme gestartet.'
+      - name: Daten am Server prüfen
+        run: |
+          $h = @{ 'X-GW-Request' = '1' }
+          Invoke-RestMethod -Method Post "$env:URL/api/login" -Headers $h -ContentType 'application/json' -Body (@{ username = 'admin'; password = $env:GW_TEST_PW } | ConvertTo-Json) -SessionVariable s | Out-Null
+          $a = (Invoke-RestMethod "$env:URL/api/agents" -WebSession $s)[0]
+          $a | Format-List display_name, online, os, platform, platform_version, agent_version, cpu, mem, disk
+          if (-not $a.online) { throw 'Agent nicht online' }
+          $d = Invoke-RestMethod "$env:URL/api/agents/$($a.id)" -WebSession $s
+          $d.checks | Format-Table kind, name, ok, detail
+          if (-not ($d.checks | Where-Object { $_.name -eq 'EventLog' -and $_.ok })) { throw 'Dienstprüfung EventLog fehlgeschlagen' }
+          if (-not ($d.checks | Where-Object { $_.name -eq 'lsass.exe' -and $_.ok })) { throw 'Prozessprüfung lsass.exe fehlgeschlagen' }
+          $logs = Invoke-RestMethod "$env:URL/api/agents/$($a.id)/logs?hours=2&max_level=7&limit=2000" -WebSession $s
+          "Empfangene Log-Einträge: $($logs.Count)"
+          $mine = $logs | Where-Object { $_.message -like '*CI-Testfehler*' }
+          $mine | Format-List source, level, event_id, message
+          if (-not $mine) { throw 'Testereignis nicht übertragen (Ereignisprotokoll-Schnittstelle)' }
+          $json = $logs | ConvertTo-Json -Depth 3
+          foreach ($bad in 'Schulze', '1234567', 'anna@') { if ($json -like "*$bad*") { throw "Personenbezogene Angabe '$bad' wurde übertragen!" } }
+          'Bereinigung in Ordnung.'
+      - name: Zugriffsrechte der Konfiguration
+        run: |
+          $acl = icacls "$env:ProgramData\Geraetewaechter"
+          $acl
+          if ($acl -match 'BUILTIN\\Users|BUILTIN\\Benutzer|Everyone|Jeder|Authenticated Users') { throw 'Konfiguration für normale Benutzer lesbar!' }
+      - name: Vorschau ohne Senden
+        run: |
+          $out = & "$env:ProgramFiles\Geraetewaechter\gw-agent.exe" preview | Out-String
+          $r = $out | ConvertFrom-Json
+          "Metriken: $($r.metrics.Count), Logs: $($r.logs.Count)"
+          if ($r.metrics.Count -lt 5) { throw 'Vorschau unvollständig' }
+      - name: Deinstallation
+        run: |
+          & "$env:ProgramFiles\Geraetewaechter\gw-agent.exe" uninstall
+          Start-Sleep 3
+          if (Get-Service geraetewaechter -ErrorAction SilentlyContinue) { throw 'Dienst noch vorhanden' }
+      - name: Protokolle bei Fehler
+        if: failure()
+        run: |
+          Get-Content "$env:RUNNER_TEMP\server.log" -ErrorAction SilentlyContinue
+          Get-Content "$env:ProgramData\Geraetewaechter\data\letzte-meldung.json" -ErrorAction SilentlyContinue | Select-Object -First 80
+          Get-WinEvent -LogName Application -MaxEvents 20 | Where-Object { $_.ProviderName -like '*geraetewaechter*' } | Format-List TimeCreated, Message
+
+  linux:
+    name: Linux – install.sh, systemd-Sandbox, Journal
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: geraetewaechter/go.mod
+          cache-dependency-path: geraetewaechter/go.sum
+      - name: Bauen
+        run: make server agents
+      - name: Testserver starten
+        run: |
+          GW_DATA_DIR=$RUNNER_TEMP/data GW_DOWNLOADS_DIR=$PWD/dist/downloads GW_COOKIE_SECURE=false \
+          GW_ADMIN_PASSWORD=$GW_TEST_PW GW_PUBLIC_URL=$URL GW_LISTEN=127.0.0.1:8080 \
+            nohup ./dist/gw-server > $RUNNER_TEMP/server.log 2>&1 &
+          for i in $(seq 30); do curl -fs $URL/healthz && break; sleep 1; done
+      - name: Installation wie beim Kunden (curl | sudo sh)
+        run: |
+          curl -fsS -c jar -H 'X-GW-Request: 1' -H 'Content-Type: application/json' -X POST $URL/api/login -d "{\"username\":\"admin\",\"password\":\"$GW_TEST_PW\"}"
+          TOK=$(curl -fsS -b jar -H 'X-GW-Request: 1' -H 'Content-Type: application/json' -X POST $URL/api/tenants \
+            -d '{"name":"CI Hof","branch":"landwirtschaft","interval_sec":15,"watch_services":["ssh"]}' | jq -r .enroll_token)
+          curl -fsSL $URL/install.sh | sudo sh -s -- "$TOK"
+          systemctl is-active geraetewaechter
+          systemctl cat geraetewaechter
+      - name: Sandbox bewerten
+        run: |
+          systemd-analyze security geraetewaechter --no-pager | tail -n 25
+          SCORE=$(systemd-analyze security geraetewaechter --no-pager | awk '/Overall exposure level/ {print $(NF-1)}')
+          echo "Exposure: $SCORE"
+          awk -v s="$SCORE" 'BEGIN { exit !(s <= 4.0) }'
+      - name: Systemfehler erzeugen und Übertragung prüfen
+        run: |
+          sudo logger -p daemon.err "CI-Testfehler: Synchronisation fuer Frau Schulze fehlgeschlagen, Tel 0171/1234567, anna@beispiel.de"
+          sleep 45
+          AID=$(curl -fsS -b jar $URL/api/agents | jq -r '.[0].id')
+          curl -fsS -b jar $URL/api/agents | jq '.[0] | {display_name, online, platform, platform_version, cpu, mem, disk}'
+          test "$(curl -fsS -b jar $URL/api/agents | jq -r '.[0].online')" = true
+          curl -fsS -b jar "$URL/api/agents/$AID" | jq '.checks'
+          curl -fsS -b jar "$URL/api/agents/$AID/logs?hours=2&max_level=7&limit=2000" > logs.json
+          echo "Log-Einträge: $(jq length logs.json)"
+          jq -r '.[] | select(.message | contains("CI-Testfehler")) | .message' logs.json
+          grep -q 'CI-Testfehler' logs.json || (echo "Journal nicht gelesen"; exit 1)
+          for bad in Schulze 1234567 anna@; do if grep -q "$bad" logs.json; then echo "Personenbezogene Angabe $bad übertragen!"; exit 1; fi; done
+          sudo ls -ld /etc/geraetewaechter /var/lib/geraetewaechter
+          test "$(sudo stat -c %a /etc/geraetewaechter/agent.json)" = 600
+      - name: Deinstallation
+        run: |
+          sudo /usr/local/bin/gw-agent uninstall
+          if systemctl is-active --quiet geraetewaechter; then echo "Dienst läuft noch"; exit 1; fi
+      - name: Protokolle bei Fehler
+        if: failure()
+        run: |
+          cat $RUNNER_TEMP/server.log || true
+          sudo journalctl -u geraetewaechter --no-pager | tail -50 || true
+
+  macos:
+    name: macOS – setup mit launchd
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: geraetewaechter/go.mod
+          cache-dependency-path: geraetewaechter/go.sum
+      - name: Bauen und Testserver starten
+        run: |
+          go build -o dist/gw-server ./cmd/gw-server
+          go build -o dist/gw-agent ./cmd/gw-agent
+          GW_DATA_DIR=$RUNNER_TEMP/data GW_COOKIE_SECURE=false GW_ADMIN_PASSWORD=$GW_TEST_PW GW_PUBLIC_URL=$URL GW_LISTEN=127.0.0.1:8080 \
+            nohup ./dist/gw-server > $RUNNER_TEMP/server.log 2>&1 &
+          for i in $(seq 30); do curl -fs $URL/healthz && break; sleep 1; done
+      - name: Installation und Prüfung
+        run: |
+          curl -fsS -c jar -H 'X-GW-Request: 1' -H 'Content-Type: application/json' -X POST $URL/api/login -d "{\"username\":\"admin\",\"password\":\"$GW_TEST_PW\"}"
+          TOK=$(curl -fsS -b jar -H 'X-GW-Request: 1' -H 'Content-Type: application/json' -X POST $URL/api/tenants \
+            -d '{"name":"CI Mac","branch":"pflege","interval_sec":15}' | jq -r .enroll_token)
+          sudo ./dist/gw-agent setup --server $URL --token "$TOK"
+          sudo launchctl list | grep geraetewaechter
+          sleep 40
+          curl -fsS -b jar $URL/api/agents | jq '.[0] | {display_name, online, platform, platform_version, cpu, mem, disk}'
+          test "$(curl -fsS -b jar $URL/api/agents | jq -r '.[0].online')" = true
+          test "$(sudo stat -f %Lp '/Library/Application Support/Geraetewaechter/agent.json')" = 600
+      - name: Deinstallation
+        run: sudo /usr/local/bin/gw-agent uninstall
+      - name: Protokolle bei Fehler
+        if: failure()
+        run: cat $RUNNER_TEMP/server.log || true
+
+  docker:
+    name: Docker-Image mit Härtung
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Image bauen
+        run: docker build -t geraetewaechter:ci .
+      - name: Mit Compose-Härtung starten
+        run: |
+          docker run -d --name gw --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges:true \
+            -e GW_ADMIN_PASSWORD=$GW_TEST_PW -e GW_COOKIE_SECURE=false -v gwdata:/data -p 127.0.0.1:8080:8080 geraetewaechter:ci
+          for i in $(seq 30); do curl -fs $URL/healthz && break; sleep 1; done
+          curl -fsS $URL/downloads/SHA256SUMS
+          test "$(curl -fsS $URL/downloads/SHA256SUMS | wc -l)" -eq 7
+          docker exec gw gw-server backup /data/test-backup.db
+          docker exec gw id
+          docker logs gw
+      - name: Compose-Datei prüfen
+        run: |
+          cp deploy/.env.example deploy/.env
+          docker compose -f deploy/docker-compose.yml config > /dev/null && echo "Compose-Datei gültig"

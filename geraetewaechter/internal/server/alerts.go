@@ -157,10 +157,12 @@ func (s *Server) conditions(r *Rule, a scopeAgent, now time.Time) ([]condition, 
 	ts := now.Unix()
 	switch r.Kind {
 	case "offline":
-		silent := ts - a.lastSeen
 		if a.lastSeen == 0 {
 			return nil, nil // noch nie gemeldet: kein Offline-Alarm
 		}
+		// Nach einem Server-Neustart erst ab Startzeitpunkt zählen, sonst
+		// gälten nach einer Server-Wartung kurz alle Geräte als offline.
+		silent := ts - max(a.lastSeen, s.started.Unix())
 		if silent >= int64(r.DurationMin)*60 {
 			return []condition{{value: float64(silent / 60), msg: fmt.Sprintf("Gerät meldet sich seit %d Minuten nicht", silent/60)}}, nil
 		}

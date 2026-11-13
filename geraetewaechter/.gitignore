@@ -3,4 +3,3 @@ data/
 *.db
 *.db-*
 deploy/.env
-cmd/gw-agent/*.syso

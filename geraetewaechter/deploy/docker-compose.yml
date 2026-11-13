@@ -1,4 +1,10 @@
 # Start:  cd deploy && cp .env.example .env && (Werte anpassen) && docker compose up -d --build
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   server:
     build: ..
@@ -10,6 +16,17 @@ services:
       - gw-data:/data
     expose:
       - "8080"
+    # Härtung: schreibgeschütztes Dateisystem (außer /data), keine Linux-Capabilities,
+    # keine Rechteerweiterung, begrenzte Ressourcen
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 200
+    mem_limit: 1g
+    logging: *logging
 
   # Caddy holt automatisch ein Let's-Encrypt-Zertifikat und erzwingt HTTPS.
   caddy:
@@ -18,14 +35,20 @@ services:
     ports:
       - "80:80"
       - "443:443"
+      - "443:443/udp"
     environment:
       GW_DOMAIN: ${GW_DOMAIN}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt:
+      - no-new-privileges:true
     depends_on:
       - server
+    logging: *logging
 
 volumes:
   gw-data:

@@ -120,6 +120,12 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusBadRequest, "ungültig")
 		return
 	}
+	// zusätzlich je Benutzername (verteilte Rateversuche von vielen Adressen)
+	userKey := "user:" + strings.ToLower(strings.TrimSpace(req.Username))
+	if !s.limiter.allowN(userKey, 30) {
+		httpErr(w, http.StatusTooManyRequests, "Konto vorübergehend gesperrt (zu viele Fehlversuche), bitte in 15 Minuten erneut")
+		return
+	}
 	var id int64
 	var hash string
 	err := s.db.QueryRow(`SELECT id, pw_hash FROM users WHERE username=?`, strings.TrimSpace(req.Username)).Scan(&id, &hash)
@@ -132,6 +138,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.Password)) != nil {
 		s.limiter.fail(ip)
+		s.limiter.fail(userKey)
 		httpErr(w, http.StatusUnauthorized, "Anmeldung fehlgeschlagen")
 		return
 	}
@@ -142,6 +149,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		}
 		if !s.checkTOTP(id, req.Code) {
 			s.limiter.fail(ip)
+			s.limiter.fail(userKey)
 			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "Bestätigungscode falsch", "totp_required": true})
 			return
 		}
@@ -200,7 +208,9 @@ type loginLimiter struct {
 
 func newLoginLimiter() *loginLimiter { return &loginLimiter{hits: map[string][]time.Time{}} }
 
-func (l *loginLimiter) allow(k string) bool {
+func (l *loginLimiter) allow(k string) bool { return l.allowN(k, 8) }
+
+func (l *loginLimiter) allowN(k string, limit int) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	cut := time.Now().Add(-15 * time.Minute)
@@ -214,7 +224,7 @@ func (l *loginLimiter) allow(k string) bool {
 	if len(l.hits) > 10000 { // Speicher begrenzen
 		l.hits = map[string][]time.Time{}
 	}
-	return len(keep) < 8
+	return len(keep) < limit
 }
 
 func (l *loginLimiter) fail(k string) {
@@ -225,12 +235,15 @@ func (l *loginLimiter) fail(k string) {
 
 // clientKey liefert einen Hash der Client-IP (die IP selbst wird nirgends gespeichert).
 func clientKey(r *http.Request) string {
-	ip := r.Header.Get("X-Forwarded-For")
-	if i := strings.IndexByte(ip, ','); i >= 0 {
-		ip = ip[:i]
-	}
-	if ip == "" {
-		ip, _, _ = net.SplitHostPort(r.RemoteAddr)
+	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
+	// X-Forwarded-For nur auswerten, wenn die Anfrage vom eigenen Proxy
+	// (Caddy im selben Docker-Netz bzw. auf demselben Rechner) kommt. Sonst
+	// könnte ein Angreifer den Header fälschen und die Sperre umgehen.
+	if remote := net.ParseIP(ip); remote != nil && (remote.IsLoopback() || remote.IsPrivate()) {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			parts := strings.Split(xff, ",")
+			ip = strings.TrimSpace(parts[len(parts)-1]) // vom eigenen Proxy gesetzter Eintrag
+		}
 	}
 	return sha256hex(strings.TrimSpace(ip))[:16]
 }

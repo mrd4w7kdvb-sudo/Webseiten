@@ -10,14 +10,13 @@ test:
 server:
 	CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o dist/gw-server ./cmd/gw-server
 
-# Herstellerangaben (Stockwerk IT) und Manifest in die Windows-.exe einbetten.
-# Erzeugt cmd/gw-agent/rsrc_windows_*.syso, die "go build" automatisch einbindet.
-# Benötigt das Werkzeug go-winres (github.com/tc-hib/go-winres).
+# Herstellerangaben (Stockwerk IT), Version und Manifest in die Windows-.exe
+# einbetten. Eigener Generator ohne Fremdcode (tools/winres); erzeugt
+# cmd/gw-agent/rsrc_windows_*.syso, die "go build" automatisch einbindet.
 winres:
-	cd cmd/gw-agent && go run github.com/tc-hib/go-winres@v0.3.3 make --arch amd64,arm64 \
-	  --product-version $(VERSION).0 --file-version $(VERSION).0
+	go run ./tools/winres -version $(VERSION) -out cmd/gw-agent
 
-agents:
+agents: winres
 	mkdir -p dist/downloads
 	@for t in $(TARGETS); do os=$${t%/*}; arch=$${t#*/}; ext=""; [ $$os = windows ] && ext=".exe"; \
 	  echo "baue $$os/$$arch"; \

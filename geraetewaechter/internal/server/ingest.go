@@ -124,7 +124,7 @@ func (s *Server) handleReport(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusBadRequest, "ungültiges Format")
 		return
 	}
-	if err := s.store(ag, &rep, time.Now()); err != nil {
+	if err := s.store(ag, &rep, time.Now(), r.Header.Get("X-GW-Queued") == "1"); err != nil {
 		httpErr(w, http.StatusInternalServerError, "Speicherfehler")
 		return
 	}
@@ -136,20 +136,35 @@ func (s *Server) handleReport(w http.ResponseWriter, r *http.Request) {
 
 // store prüft und bereinigt die Meldung erneut (zweite Verteidigungslinie)
 // und speichert sie.
-func (s *Server) store(ag *agentAuth, rep *proto.Report, now time.Time) error {
+func (s *Server) store(ag *agentAuth, rep *proto.Report, now time.Time, queued bool) error {
+	// Nachgereichte Meldungen (Offline-Puffer) behalten ihre Erfassungszeit,
+	// sofern sie plausibel ist. Aktuelle Meldungen nutzen die Serverzeit, damit
+	// eine falsch gehende Uhr am Gerät die Auswertung nicht verfälscht.
 	ts := now.Unix()
+	if queued {
+		if t := rep.Time.Unix(); t > ts-int64(s.cfg.MetricRetention)*86400 && t <= ts {
+			ts = t
+		}
+	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	sys := rep.System
-	if _, err := tx.Exec(`UPDATE agents SET os=?, platform=?, platform_version=?, kernel=?, arch=?, agent_version=?, uptime=?, last_seen=? WHERE id=?`,
-		short(sys.OS, 20), short(s.san.Label(sys.Platform), 40), short(s.san.Label(sys.PlatformVersion), 40),
-		short(s.san.Label(sys.KernelVersion), 60), short(sys.Arch, 20), short(rep.AgentVersion, 20),
-		sys.UptimeSeconds, ts, ag.id); err != nil {
-		return err
+	if queued {
+		// Das Gerät ist gerade erreichbar; Systemdaten stammen aus der aktuellen Meldung.
+		if _, err := tx.Exec(`UPDATE agents SET last_seen=MAX(last_seen, ?) WHERE id=?`, now.Unix(), ag.id); err != nil {
+			return err
+		}
+	} else {
+		sys := rep.System
+		if _, err := tx.Exec(`UPDATE agents SET os=?, platform=?, platform_version=?, kernel=?, arch=?, agent_version=?, uptime=?, last_seen=? WHERE id=?`,
+			short(sys.OS, 20), short(s.san.Label(sys.Platform), 40), short(s.san.Label(sys.PlatformVersion), 40),
+			short(s.san.Label(sys.KernelVersion), 60), short(sys.Arch, 20), short(rep.AgentVersion, 20),
+			sys.UptimeSeconds, ts, ag.id); err != nil {
+			return err
+		}
 	}
 
 	insM, err := tx.Prepare(`INSERT INTO metrics(agent_id, ts, name, labels, value) VALUES(?,?,?,?,?)`)
@@ -158,7 +173,7 @@ func (s *Server) store(ag *agentAuth, rep *proto.Report, now time.Time) error {
 	}
 	defer insM.Close()
 	upL, err := tx.Prepare(`INSERT INTO latest(agent_id,name,labels,value,ts) VALUES(?,?,?,?,?)
-		ON CONFLICT(agent_id,name,labels) DO UPDATE SET value=excluded.value, ts=excluded.ts`)
+		ON CONFLICT(agent_id,name,labels) DO UPDATE SET value=excluded.value, ts=excluded.ts WHERE excluded.ts >= latest.ts`)
 	if err != nil {
 		return err
 	}
@@ -185,8 +200,10 @@ func (s *Server) store(ag *agentAuth, rep *proto.Report, now time.Time) error {
 	}
 
 	// Prüfungen: aktueller Zustand + als Metrik für Alarmregeln
-	if _, err := tx.Exec(`DELETE FROM checks WHERE agent_id=?`, ag.id); err != nil {
-		return err
+	if !queued {
+		if _, err := tx.Exec(`DELETE FROM checks WHERE agent_id=?`, ag.id); err != nil {
+			return err
+		}
 	}
 	for i, c := range rep.Checks {
 		if i >= proto.MaxChecksPerRep {
@@ -203,9 +220,11 @@ func (s *Server) store(ag *agentAuth, rep *proto.Report, now time.Time) error {
 		if c.OK {
 			ok = 1
 		}
-		if _, err := tx.Exec(`INSERT OR REPLACE INTO checks(agent_id,kind,name,ok,detail,ts) VALUES(?,?,?,?,?,?)`,
-			ag.id, c.Kind, name, ok, short(s.san.Label(c.Detail), 64), ts); err != nil {
-			return err
+		if !queued {
+			if _, err := tx.Exec(`INSERT OR REPLACE INTO checks(agent_id,kind,name,ok,detail,ts) VALUES(?,?,?,?,?,?)`,
+				ag.id, c.Kind, name, ok, short(s.san.Label(c.Detail), 64), ts); err != nil {
+				return err
+			}
 		}
 		if err := putMetric(c.Kind+".running", map[string]string{"name": name}, ok); err != nil {
 			return err

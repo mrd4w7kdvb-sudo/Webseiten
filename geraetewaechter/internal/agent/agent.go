@@ -232,7 +232,7 @@ var (
 	errPending = errors.New("Gerät wartet auf Freigabe in der Verwaltung")
 )
 
-func (a *Agent) post(body []byte) (*proto.ReportResponse, error) {
+func (a *Agent) post(body []byte, queued bool) (*proto.ReportResponse, error) {
 	req, err := http.NewRequest(http.MethodPost, a.cfg.Server+"/agent/v1/report", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -241,6 +241,9 @@ func (a *Agent) post(body []byte) (*proto.ReportResponse, error) {
 	req.Header.Set("Content-Encoding", "gzip")
 	req.Header.Set("Authorization", "Bearer "+a.cfg.AgentID+"."+a.cfg.AgentKey)
 	req.Header.Set("User-Agent", "gw-agent/"+Version)
+	if queued {
+		req.Header.Set("X-GW-Queued", "1")
+	}
 	resp, err := a.client.Do(req)
 	if err != nil {
 		return nil, err
@@ -275,7 +278,7 @@ func (a *Agent) Once() error {
 	}
 	// Erst ältere gepufferte Meldungen nachsenden
 	a.flushQueue()
-	rr, err := a.post(body)
+	rr, err := a.post(body, false)
 	if err != nil {
 		if !errors.Is(err, errAuth) && !errors.Is(err, errBadReport) && !errors.Is(err, errPending) {
 			enqueue(body)
@@ -370,7 +373,7 @@ func (a *Agent) flushQueue() {
 			_ = os.Remove(p)
 			continue
 		}
-		if _, err := a.post(b); err != nil {
+		if _, err := a.post(b, true); err != nil {
 			if errors.Is(err, errBadReport) {
 				_ = os.Remove(p)
 				continue

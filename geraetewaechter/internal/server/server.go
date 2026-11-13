@@ -30,6 +30,8 @@ type Config struct {
 	MetricRetention  int // Tage
 	LogRetention     int // Tage
 	AlertRetention   int // Tage
+	BackupKeep       int // Anzahl täglicher Sicherungen (0 = aus)
+	HeartbeatURL     string
 	CookieSecure     bool
 	EvaluateInterval time.Duration
 	SkipBootstrap    bool // kein automatischer Erst-Admin (CLI)
@@ -47,6 +49,8 @@ func ConfigFromEnv() Config {
 		MetricRetention:  envInt("GW_METRIC_RETENTION_DAYS", 30),
 		LogRetention:     envInt("GW_LOG_RETENTION_DAYS", 14),
 		AlertRetention:   envInt("GW_ALERT_RETENTION_DAYS", 180),
+		BackupKeep:       envIntZero("GW_BACKUP_KEEP", 7),
+		HeartbeatURL:     os.Getenv("GW_HEARTBEAT_URL"),
 		CookieSecure:     env("GW_COOKIE_SECURE", "true") != "false",
 		EvaluateInterval: time.Duration(envInt("GW_EVALUATE_SECONDS", 30)) * time.Second,
 	}
@@ -55,6 +59,13 @@ func ConfigFromEnv() Config {
 
 func env(k, def string) string {
 	if v := strings.TrimSpace(os.Getenv(k)); v != "" {
+		return v
+	}
+	return def
+}
+
+func envIntZero(k string, def int) int {
+	if v, err := strconv.Atoi(os.Getenv(k)); err == nil && v >= 0 {
 		return v
 	}
 	return def
@@ -75,6 +86,7 @@ type Server struct {
 	notifier *Notifier
 	limiter  *loginLimiter
 	mu       sync.Mutex // serialisiert die Alarmauswertung
+	started  time.Time
 }
 
 // New öffnet die Datenbank und legt ggf. den ersten Admin an.
@@ -91,6 +103,7 @@ func New(cfg Config) (*Server, error) {
 		db:      db,
 		san:     privacy.MustNew(privacy.Options{}),
 		limiter: newLoginLimiter(),
+		started: time.Now(),
 	}
 	s.notifier = &Notifier{db: db, publicURL: cfg.PublicURL}
 	if cfg.SkipBootstrap {
@@ -140,9 +153,12 @@ func (s *Server) Run(ctx context.Context) error {
 func (s *Server) loop(ctx context.Context) {
 	eval := time.NewTicker(s.cfg.EvaluateInterval)
 	clean := time.NewTicker(time.Hour)
+	beat := time.NewTicker(5 * time.Minute)
 	defer eval.Stop()
 	defer clean.Stop()
+	defer beat.Stop()
 	s.cleanup()
+	s.heartbeat()
 	for {
 		select {
 		case <-ctx.Done():
@@ -151,6 +167,9 @@ func (s *Server) loop(ctx context.Context) {
 			s.evaluate(time.Now())
 		case <-clean.C:
 			s.cleanup()
+			s.autoBackup(time.Now())
+		case <-beat.C:
+			s.heartbeat()
 		}
 	}
 }

@@ -23,9 +23,13 @@ mkdir -p /usr/local/bin
 TMP=/usr/local/bin/.gw-agent-download
 trap 'rm -f "$TMP" "$TMP.sums"' EXIT
 
+# Nur HTTPS erlaubt (Ausnahme: lokaler Testserver)
+PROTO='=https'
+case "$SERVER" in http://localhost:*|http://127.0.0.1:*) PROTO='=http,https' ;; esac
+
 echo "Lade $BIN ..."
-curl -fsSL --proto '=https' --tlsv1.2 "$SERVER/downloads/$BIN" -o "$TMP"
-curl -fsSL --proto '=https' --tlsv1.2 "$SERVER/downloads/SHA256SUMS" -o "$TMP.sums"
+curl -fsSL --proto "$PROTO" --tlsv1.2 "$SERVER/downloads/$BIN" -o "$TMP"
+curl -fsSL --proto "$PROTO" --tlsv1.2 "$SERVER/downloads/SHA256SUMS" -o "$TMP.sums"
 EXPECTED=$(awk -v f="$BIN" '$2==f {print $1}' "$TMP.sums")
 if command -v sha256sum >/dev/null 2>&1; then
   ACTUAL=$(sha256sum "$TMP" | awk '{print $1}')

@@ -7,6 +7,7 @@ COPY . .
 ARG VERSION=1.0.0
 ENV CGO_ENABLED=0
 RUN go build -trimpath -ldflags "-s -w" -o /out/gw-server ./cmd/gw-server
+RUN go run ./tools/winres -version ${VERSION} -out cmd/gw-agent
 RUN mkdir -p /out/downloads && \
     for t in linux/amd64 linux/arm64 linux/arm windows/amd64 windows/arm64 darwin/amd64 darwin/arm64; do \
       os=${t%/*}; arch=${t#*/}; ext=""; [ "$os" = windows ] && ext=".exe"; \

@@ -94,9 +94,11 @@ func (n *Notifier) Send(ids []int64, msg Notification) {
 		msg.Link = n.publicURL + "/#/geraet/" + msg.DeviceID
 	}
 	for _, c := range n.load(ids) {
-		if err := deliver(c, msg); err != nil {
-			log.Printf("Benachrichtigung über %q fehlgeschlagen: %v", c.Name, err)
-		}
+		go func(c Channel) {
+			if err := sendWithRetry(c, msg); err != nil {
+				log.Printf("Benachrichtigung über %q: %v", c.Name, err)
+			}
+		}(c)
 	}
 }
 
