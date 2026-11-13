@@ -56,7 +56,7 @@ Ist das Gerät bereits registriert, wird der Schlüssel (`-`) nicht benötigt; R
 |---|---|
 | Admin-Passwort vergessen | `docker compose exec server gw-server passwd admin` |
 | Handy mit Authenticator verloren | `docker compose exec server gw-server totp-reset admin`, danach neu einrichten |
-| Gerät gestohlen / Kunde beendet Vertrag | Gerät in der Oberfläche deaktivieren oder entfernen; beim Kunden `gw-agent uninstall` |
+| Gerät gestohlen / Kunde beendet Vertrag | Gerät in der Oberfläche deaktivieren oder entfernen; beim Kunden `gw-agent uninstall --purge` (stoppt den Dienst und löscht Konfiguration, Geräteschlüssel und lokale Daten) |
 | Registrierungsschlüssel versehentlich weitergegeben | Kundenseite → „Neu erzeugen“; unbekannte Geräte in „wartet auf Freigabe“ entfernen |
 | Verdacht auf Server-Einbruch | Server vom Netz, Sicherung prüfen, neu aufsetzen, Admin-Passwort und 2FA neu, Registrierungsschlüssel aller Kunden neu erzeugen, Geräte bei Bedarf neu registrieren. Kundengeräte selbst sind nicht gefährdet, da der Agent keine Befehle annimmt. Meldepflichten (Art. 33 DSGVO, 72 h) prüfen. |
 | Viele Geräte gleichzeitig offline | Erst eigenen Server/Netz prüfen; nach einer Server-Wartung entstehen dank Schonfrist keine Fehlalarme |

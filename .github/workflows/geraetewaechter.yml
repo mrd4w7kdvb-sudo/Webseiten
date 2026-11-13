@@ -149,9 +149,13 @@ jobs:
           if ($r.metrics.Count -lt 5) { throw 'Vorschau unvollständig' }
       - name: Deinstallation
         run: |
-          & "$env:ProgramFiles\Geraetewaechter\gw-agent.exe" uninstall
+          & "$env:ProgramFiles\Geraetewaechter\gw-agent.exe" uninstall --purge
+          if ($LASTEXITCODE -ne 0) { throw 'uninstall fehlgeschlagen' }
           Start-Sleep 3
           if (Get-Service geraetewaechter -ErrorAction SilentlyContinue) { throw 'Dienst noch vorhanden' }
+          if (Get-Process gw-agent -ErrorAction SilentlyContinue) { throw 'Agent läuft noch' }
+          if (Test-Path "$env:ProgramData\Geraetewaechter") { throw 'Konfiguration nicht gelöscht' }
+          'Dienst gestoppt, entfernt, Konfiguration gelöscht.'
       - name: Protokolle bei Fehler
         if: failure()
         run: |
@@ -207,8 +211,11 @@ jobs:
           test "$(sudo stat -c %a /etc/geraetewaechter/agent.json)" = 600
       - name: Deinstallation
         run: |
-          sudo /usr/local/bin/gw-agent uninstall
+          sudo /usr/local/bin/gw-agent uninstall --purge
           if systemctl is-active --quiet geraetewaechter; then echo "Dienst läuft noch"; exit 1; fi
+          if pgrep -x gw-agent; then echo "Agent-Prozess läuft noch"; exit 1; fi
+          if sudo test -e /etc/geraetewaechter/agent.json; then echo "Konfiguration nicht gelöscht"; exit 1; fi
+          echo "Dienst gestoppt, entfernt, Konfiguration gelöscht."
       - name: Protokolle bei Fehler
         if: failure()
         run: |
@@ -243,7 +250,11 @@ jobs:
           test "$(curl -fsS -b jar $URL/api/agents | jq -r '.[0].online')" = true
           test "$(sudo stat -f %Lp '/Library/Application Support/Geraetewaechter/agent.json')" = 600
       - name: Deinstallation
-        run: sudo /usr/local/bin/gw-agent uninstall
+        run: |
+          sudo /usr/local/bin/gw-agent uninstall --purge
+          sleep 2
+          if pgrep -x gw-agent; then echo "Agent-Prozess läuft noch"; exit 1; fi
+          if sudo test -e "/Library/Application Support/Geraetewaechter/agent.json"; then echo "Konfiguration nicht gelöscht"; exit 1; fi
       - name: Protokolle bei Fehler
         if: failure()
         run: cat $RUNNER_TEMP/server.log || true

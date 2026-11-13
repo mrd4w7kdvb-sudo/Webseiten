@@ -111,7 +111,7 @@ Der Ordner ist nur für SYSTEM/Administratoren bzw. root lesbar. Beispiel mit al
 - `ca_file`: nur dieser Zertifizierungsstelle vertrauen (Pinning), `proxy`: Proxy des Kundennetzes – siehe [docs/SICHERHEIT.md](docs/SICHERHEIT.md).
 - `watch_processes` / `watch_services`: zusätzlich zu den zentral beim Kunden hinterlegten Namen.
 
-Befehle: `gw-agent setup | preview | once | status | start | stop | restart | uninstall | paths | version`
+Befehle: `gw-agent setup | preview | once | status | start | stop | restart | uninstall [--purge] | paths | version`
 
 ## Entwicklung
 

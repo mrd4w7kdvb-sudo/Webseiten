@@ -28,7 +28,9 @@ Befehle:
   enroll --server URL --token SCHLÜSSEL [--name NAME] [--force]
                 Gerät beim Server registrieren
   install       als Systemdienst einrichten (Windows-Dienst, systemd, launchd)
-  uninstall     Systemdienst entfernen
+  uninstall [--purge]
+                Dienst stoppen und entfernen; --purge löscht zusätzlich
+                Konfiguration, Geräteschlüssel und lokale Daten
   start | stop | restart | status
                 Systemdienst steuern
   run           im Vordergrund ausführen (wird vom Dienst verwendet)
@@ -309,7 +311,36 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Println("Dienst installiert.")
-	case "uninstall", "start", "stop", "restart":
+	case "uninstall":
+		purge := len(args) > 0 && args[0] == "--purge"
+		svc, err := newService("")
+		if err != nil {
+			log.Fatal(err)
+		}
+		// Erst stoppen, sonst liefe der Agent bis zum nächsten Neustart weiter.
+		_ = svc.Stop()
+		for i := 0; i < 20; i++ {
+			if st, err := svc.Status(); err != nil || st != service.StatusRunning {
+				break
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
+		if err := svc.Uninstall(); err != nil {
+			fmt.Fprintln(os.Stderr, "Fehler:", err)
+			os.Exit(1)
+		}
+		fmt.Println("Dienst gestoppt und entfernt.")
+		if purge {
+			for _, p := range []string{agent.DataDir(), filepath.Dir(agent.ConfigPath())} {
+				if err := os.RemoveAll(p); err != nil {
+					fmt.Fprintln(os.Stderr, "Konnte nicht löschen:", p, err)
+				}
+			}
+			fmt.Println("Konfiguration, Geräteschlüssel und lokale Daten gelöscht.")
+		} else {
+			fmt.Println("Konfiguration bleibt erhalten:", agent.ConfigPath(), "(vollständig entfernen mit: uninstall --purge)")
+		}
+	case "start", "stop", "restart":
 		svc, err := newService("")
 		if err != nil {
 			log.Fatal(err)
