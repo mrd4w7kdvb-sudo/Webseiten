@@ -26,7 +26,96 @@ function db(): PDO
         db_migrate($pdo);
         db_seed($pdo);
     }
+    db_upgrade($pdo);
     return $pdo;
+}
+
+const SCHEMA_VERSION = 2;
+
+/** Bringt bestehende Datenbanken auf den aktuellen Stand (läuft automatisch, nur einmal je Version). */
+function db_upgrade(PDO $pdo): void
+{
+    $v = (int)$pdo->query('PRAGMA user_version')->fetchColumn();
+    if ($v >= SCHEMA_VERSION) {
+        return;
+    }
+    $pdo->beginTransaction();
+    if ($v < 2) {
+        $pdo->exec(<<<SQL
+CREATE TABLE IF NOT EXISTS companies (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  vat_id TEXT NOT NULL DEFAULT '',
+  billing_address TEXT NOT NULL DEFAULT '',
+  billing_email TEXT NOT NULL DEFAULT '',
+  phone TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'beantragt',
+  max_price_night REAL NOT NULL DEFAULT 0,
+  payment_days INTEGER NOT NULL DEFAULT 14,
+  admin_note TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE TABLE IF NOT EXISTS cost_centers (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  name TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  role TEXT NOT NULL,
+  company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
+  is_owner INTEGER NOT NULL DEFAULT 0,
+  name TEXT NOT NULL,
+  email TEXT NOT NULL UNIQUE,
+  phone TEXT NOT NULL DEFAULT '',
+  password_hash TEXT NOT NULL DEFAULT '',
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+  last_login TEXT
+);
+CREATE TABLE IF NOT EXISTS password_tokens (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token_hash TEXT NOT NULL UNIQUE,
+  expires_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS invoices (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  invoice_no TEXT NOT NULL UNIQUE,
+  company_id INTEGER NOT NULL REFERENCES companies(id),
+  period_from TEXT NOT NULL,
+  period_to TEXT NOT NULL,
+  invoice_date TEXT NOT NULL,
+  due_date TEXT NOT NULL,
+  total REAL NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'offen',
+  paid_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE TABLE IF NOT EXISTS invoice_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  invoice_id INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
+  booking_id INTEGER NOT NULL REFERENCES bookings(id),
+  description TEXT NOT NULL,
+  period_from TEXT NOT NULL,
+  period_to TEXT NOT NULL,
+  nights INTEGER NOT NULL,
+  amount REAL NOT NULL
+);
+ALTER TABLE bookings ADD COLUMN company_id INTEGER REFERENCES companies(id);
+ALTER TABLE bookings ADD COLUMN booked_by INTEGER REFERENCES users(id);
+ALTER TABLE bookings ADD COLUMN series_ref TEXT;
+ALTER TABLE bookings ADD COLUMN payment_status TEXT NOT NULL DEFAULT 'offen';
+ALTER TABLE bookings ADD COLUMN paid_at TEXT;
+ALTER TABLE listings ADD COLUMN host_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_bookings_company ON bookings(company_id);
+CREATE INDEX IF NOT EXISTS idx_bookings_series ON bookings(series_ref);
+CREATE INDEX IF NOT EXISTS idx_invoice_items_booking ON invoice_items(booking_id);
+SQL);
+        $pdo->exec("INSERT OR IGNORE INTO settings(key, value) VALUES ('hosts_can_confirm', '1')");
+    }
+    $pdo->exec('PRAGMA user_version = ' . SCHEMA_VERSION);
+    $pdo->commit();
 }
 
 function table_exists(PDO $pdo, string $table): bool

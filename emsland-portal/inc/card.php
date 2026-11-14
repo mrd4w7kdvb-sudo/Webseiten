@@ -11,6 +11,9 @@ $link = url('unterkunft.php', ['u' => $l['slug']] + ($cardQuery ?? []));
       <?php if ($l['mode_urlaub']): ?><span class="badge">Urlaub</span><?php endif; ?>
       <?php if ($l['mode_business']): ?><span class="badge badge-business">Business</span><?php endif; ?>
       <?php if ($l['mode_langzeit']): ?><span class="badge badge-langzeit">Wohnen auf Zeit</span><?php endif; ?>
+      <?php $cu = current_user(); if ($cu && $cu['role'] === 'firma' && (float)$cu['company_max_price'] > 0):
+          $perNight = isset($q['total'], $q['nights']) ? $q['total'] / max(1, $q['nights']) : (float)$l['price_night'];
+          if ($perNight > (float)$cu['company_max_price']): ?><span class="badge badge-bad">über Reiserichtlinie</span><?php endif; endif; ?>
     </div>
     <h3><?= e($l['title']) ?></h3>
     <p class="meta">

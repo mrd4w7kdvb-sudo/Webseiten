@@ -21,7 +21,7 @@ $coords = ['lat', 'lng'];
 $data = $l ?? ['title' => '', 'type' => 'Ferienwohnung', 'address' => '', 'summary' => '', 'description' => '', 'host_name' => '', 'host_email' => '', 'host_phone' => '',
     'ical_import_url' => '', 'place_id' => 0, 'max_guests' => 2, 'bedrooms' => 1, 'single_beds' => 0, 'bathrooms' => 1, 'size_m2' => 0, 'min_nights' => 2, 'base_guests' => 2,
     'wifi_mbit' => 0, 'price_night' => 0, 'cleaning_fee' => 0, 'weekly_discount' => 0, 'month_price' => 0, 'extra_guest_fee' => 0, 'mode_urlaub' => 1, 'mode_business' => 0,
-    'mode_langzeit' => 0, 'active' => 0, 'featured' => 0, 'lat' => null, 'lng' => null, 'amenities' => '[]', 'slug' => ''];
+    'mode_langzeit' => 0, 'active' => 0, 'featured' => 0, 'lat' => null, 'lng' => null, 'amenities' => '[]', 'slug' => '', 'host_user_id' => null];
 $errors = [];
 
 if (is_post()) {
@@ -35,6 +35,8 @@ if (is_post()) {
                 foreach ($decs as $f) $data[$f] = max(0, parse_decimal(post($f)));
                 foreach ($flags as $f) $data[$f] = post($f) === '1' ? 1 : 0;
                 foreach ($coords as $f) $data[$f] = post($f) === '' ? null : parse_decimal(post($f));
+                $hostIds = array_map('intval', $pdo->query("SELECT id FROM users WHERE role = 'gastgeber'")->fetchAll(PDO::FETCH_COLUMN));
+                $data['host_user_id'] = in_array((int)post('host_user_id'), $hostIds, true) ? (int)post('host_user_id') : null;
                 $data['amenities'] = json_encode(array_values(array_intersect(array_keys(AMENITIES), (array)($_POST['amenities'] ?? []))));
                 if (!in_array($data['type'], LISTING_TYPES, true)) $data['type'] = LISTING_TYPES[0];
                 if ($data['title'] === '') $errors[] = 'Bitte einen Titel angeben.';
@@ -55,7 +57,7 @@ if (is_post()) {
                     $data['lat'] = (float)$p['lat'];
                     $data['lng'] = (float)$p['lng'];
                 }
-                $cols = array_merge($text, $ints, $decs, $flags, $coords, ['amenities']);
+                $cols = array_merge($text, $ints, $decs, $flags, $coords, ['amenities', 'host_user_id']);
                 $vals = array_map(fn($c) => $c === 'place_id' && !$data[$c] ? null : $data[$c], $cols);
                 if ($l) {
                     $set = implode(', ', array_map(fn($c) => "$c = ?", $cols));
@@ -237,7 +239,11 @@ admin_header($l ? $l['title'] : 'Neue Unterkunft', 'unterkuenfte');
   <div class="panel">
     <h2>Gastgeber &amp; Sichtbarkeit</h2>
     <div class="form-grid">
-      <div class="field"><label for="host_name">Gastgeber/in</label><input type="text" id="host_name" name="host_name" value="<?= e($data['host_name']) ?>"></div>
+      <div class="field full"><label for="host_user_id">Gastgeber-Zugang (Login)</label>
+        <select id="host_user_id" name="host_user_id"><option value="">– keiner –</option>
+          <?php foreach ($pdo->query("SELECT id, name, email FROM users WHERE role = 'gastgeber' ORDER BY name") as $h): ?><option value="<?= (int)$h['id'] ?>" <?= (int)$h['id'] === (int)$data['host_user_id'] ? 'selected' : '' ?>><?= e($h['name'] . ' (' . $h['email'] . ')') ?></option><?php endforeach; ?>
+        </select><p class="hint">Der Gastgeber kann diese Unterkunft dann selbst pflegen. <a href="<?= e(url('admin/gastgeber-konten.php')) ?>">Zugänge verwalten</a></p></div>
+      <div class="field"><label for="host_name">Gastgeber/in (Name)</label><input type="text" id="host_name" name="host_name" value="<?= e($data['host_name']) ?>"></div>
       <div class="field"><label for="host_phone">Telefon</label><input type="tel" id="host_phone" name="host_phone" value="<?= e($data['host_phone']) ?>"></div>
       <div class="field"><label for="host_email">E-Mail</label><input type="email" id="host_email" name="host_email" value="<?= e($data['host_email']) ?>"></div>
       <div class="field"><label for="ical_import_url">iCal-Import (Kalender von Airbnb, Booking …)</label><input type="url" id="ical_import_url" name="ical_import_url" value="<?= e($data['ical_import_url']) ?>" placeholder="https://…"></div>

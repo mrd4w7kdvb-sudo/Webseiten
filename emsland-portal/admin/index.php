@@ -36,6 +36,10 @@ admin_header('Übersicht', 'dashboard');
   <div class="alert alert-info">Bitte hinterlegen Sie unter <a href="<?= e(url('admin/einstellungen.php')) ?>">Einstellungen</a> Ihre Kontaktdaten und unter <a href="<?= e(url('admin/seiten.php')) ?>">Seiten &amp; Texte</a> Impressum und Datenschutzerklärung.</div>
 <?php endif; ?>
 
+<?php $newFirms = (int)$pdo->query("SELECT COUNT(*) FROM companies WHERE status = 'beantragt'")->fetchColumn();
+$overdue = $pdo->query("SELECT COUNT(*) AS n, COALESCE(SUM(total), 0) AS s FROM invoices WHERE status = 'offen' AND due_date < date('now','localtime')")->fetch(); ?>
+<?php if ($newFirms): ?><div class="alert alert-info"><?= $newFirms ?> neue(s) Firmenkonto/-konten warten auf Freischaltung. <a href="<?= e(url('admin/firmen.php', ['status' => 'beantragt'])) ?>">Jetzt prüfen</a></div><?php endif; ?>
+<?php if ((int)$overdue['n']): ?><div class="alert alert-error"><?= (int)$overdue['n'] ?> Sammelrechnung(en) überfällig (<?= money((float)$overdue['s']) ?>). <a href="<?= e(url('admin/sammelrechnungen.php', ['status' => 'offen'])) ?>">Ansehen</a></div><?php endif; ?>
 <div class="stats">
   <a class="stat" href="<?= e(url('admin/buchungen.php', ['status' => 'angefragt'])) ?>" style="text-decoration:none"><strong><?= $open ?></strong><span>offene Buchungsanfragen</span></a>
   <div class="stat"><strong><?= $occ ?> %</strong><span>Auslastung nächste 30 Tage</span></div>

@@ -4,7 +4,7 @@ require dirname(__DIR__) . '/inc/admin.php';
 $admin = require_admin();
 
 $keys = ['site_name', 'site_claim', 'contact_email', 'contact_phone', 'notify_email', 'company_name', 'company_address', 'tax_id', 'vat_rate', 'payment_info'];
-$flags = ['small_business', 'noindex'];
+$flags = ['small_business', 'noindex', 'hosts_can_confirm'];
 
 if (is_post()) {
     check_csrf();
@@ -86,6 +86,8 @@ admin_header('Einstellungen', 'einstellungen');
     <div class="field"><label for="notify_email">Benachrichtigungen an</label><input type="email" id="notify_email" name="notify_email" value="<?= e(setting('notify_email')) ?>"><p class="hint">Hierhin gehen neue Anfragen.</p></div>
   </div>
   <label class="check"><input type="checkbox" name="noindex" value="1" <?= setting('noindex') === '1' ? 'checked' : '' ?>> <span><strong>Vor Suchmaschinen verbergen</strong> (noindex). Zum Start empfohlen; ausschalten, wenn das Portal öffentlich gefunden werden soll.</span></label>
+
+  <label class="check"><input type="checkbox" name="hosts_can_confirm" value="1" <?= setting('hosts_can_confirm', '1') === '1' ? 'checked' : '' ?>> <span><strong>Gastgeber dürfen Anfragen selbst bestätigen oder ablehnen</strong> (sonst nur Sie im Admin-Bereich)</span></label>
 
   <h2 style="margin-top:22px">Rechnungen</h2>
   <div class="form-grid">

@@ -34,7 +34,7 @@ function base_path(): string
     static $base = null;
     if ($base === null) {
         $dir = str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME'] ?? '/'));
-        if (basename($dir) === 'admin') {
+        if (in_array(basename($dir), ['admin', 'konto'], true)) {
             $dir = dirname($dir);
         }
         $base = rtrim($dir, '/');
@@ -401,7 +401,13 @@ function page_header(string $title, string $description = '', string $bodyClass 
       <a href="<?= e(url('suche.php', ['modus' => 'urlaub'])) ?>">Urlaub</a>
       <a href="<?= e(url('suche.php', ['modus' => 'business'])) ?>">Wohnen auf Zeit</a>
       <a href="<?= e(url('firmen.php')) ?>">Für Firmen</a>
-      <a href="<?= e(url('gastgeber.php')) ?>" class="nav-cta">Gastgeber werden</a>
+      <?php $acct = current_user(); ?>
+      <?php if ($acct): ?>
+        <a href="<?= e(url('konto/index.php')) ?>" class="nav-cta">Mein Konto</a>
+      <?php else: ?>
+        <a href="<?= e(url('konto/login.php')) ?>">Anmelden</a>
+        <a href="<?= e(url('gastgeber.php')) ?>" class="nav-cta">Gastgeber werden</a>
+      <?php endif; ?>
     </nav>
   </div>
 </header>
@@ -462,4 +468,28 @@ function parse_decimal(string $s): float
         $s = str_replace(['.', ','], ['', '.'], $s);
     }
     return is_numeric($s) ? (float)$s : 0.0;
+}
+
+/** Bild-Upload prüfen und speichern. Gibt den Dateinamen zurück oder wirft eine Exception. */
+function store_upload(array $file): string
+{
+    if (($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+        throw new RuntimeException('Upload fehlgeschlagen (Fehlercode ' . (int)($file['error'] ?? -1) . ').');
+    }
+    if ($file['size'] > 8 * 1024 * 1024) {
+        throw new RuntimeException('Bild ist größer als 8 MB.');
+    }
+    $info = @getimagesize($file['tmp_name']);
+    $types = [IMAGETYPE_JPEG => 'jpg', IMAGETYPE_PNG => 'png', IMAGETYPE_WEBP => 'webp'];
+    if (!$info || !isset($types[$info[2]])) {
+        throw new RuntimeException('Nur JPG-, PNG- oder WebP-Bilder sind erlaubt.');
+    }
+    if (!is_dir(UPLOAD_DIR)) {
+        mkdir(UPLOAD_DIR, 0755, true);
+    }
+    $name = date('Ymd') . '-' . bin2hex(random_bytes(8)) . '.' . $types[$info[2]];
+    if (!move_uploaded_file($file['tmp_name'], UPLOAD_DIR . '/' . $name)) {
+        throw new RuntimeException('Bild konnte nicht gespeichert werden. Bitte Schreibrechte des Ordners „uploads“ prüfen.');
+    }
+    return $name;
 }

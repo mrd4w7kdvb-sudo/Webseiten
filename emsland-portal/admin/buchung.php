@@ -8,18 +8,23 @@ $id = (int)get('id');
 $isNew = get('neu') === '1' || $id === 0;
 $b = null;
 if (!$isNew) {
-    $st = $pdo->prepare('SELECT b.*, l.title, l.slug FROM bookings b JOIN listings l ON l.id = b.listing_id WHERE b.id = ?');
-    $st->execute([$id]);
-    $b = $st->fetch();
+    $b = booking_by_id($id);
     if (!$b) {
         flash('error', 'Buchung nicht gefunden.');
         redirect(url('admin/buchungen.php'));
     }
 }
 $listings = $pdo->query('SELECT * FROM listings ORDER BY title')->fetchAll();
+$companies = $pdo->query('SELECT id, name, status, vat_id, billing_address FROM companies ORDER BY name')->fetchAll();
+$inCollective = [];
+if ($b) {
+    $st = $pdo->prepare('SELECT i.id, i.invoice_no, it.period_from, it.period_to, it.amount FROM invoice_items it JOIN invoices i ON i.id = it.invoice_id WHERE it.booking_id = ? ORDER BY it.period_from');
+    $st->execute([$b['id']]);
+    $inCollective = $st->fetchAll();
+}
 $fields = ['listing_id', 'status', 'mode', 'date_from', 'date_to', 'guests', 'name', 'email', 'phone', 'company', 'vat_id', 'cost_center', 'billing_address', 'purpose', 'message', 'admin_note', 'price_total'];
 $data = $b ?? ['listing_id' => (int)get('unterkunft') ?: ($listings[0]['id'] ?? 0), 'status' => 'bestaetigt', 'mode' => 'urlaub', 'date_from' => '', 'date_to' => '', 'guests' => 2,
-    'name' => '', 'email' => '', 'phone' => '', 'company' => '', 'vat_id' => '', 'cost_center' => '', 'billing_address' => '', 'purpose' => '', 'message' => '', 'admin_note' => '', 'price_total' => '', 'weekdays_only' => 0];
+    'name' => '', 'email' => '', 'phone' => '', 'company' => '', 'vat_id' => '', 'cost_center' => '', 'billing_address' => '', 'purpose' => '', 'message' => '', 'admin_note' => '', 'price_total' => '', 'weekdays_only' => 0, 'company_id' => null];
 $errors = [];
 
 if (is_post()) {
@@ -33,17 +38,26 @@ if (is_post()) {
     }
 
     if ($action === 'invoice' && $b) {
-        if (!$b['invoice_no']) {
-            $pdo->beginTransaction();
-            $year = date('Y');
-            $counterKey = 'invoice_counter_' . $year;
-            $n = (int)setting($counterKey, '0') + 1;
-            set_setting($counterKey, (string)$n);
-            $no = sprintf('%s-%04d', $year, $n);
-            $pdo->prepare('UPDATE bookings SET invoice_no = ?, invoice_date = ? WHERE id = ?')->execute([$no, date('Y-m-d'), $b['id']]);
-            $pdo->commit();
+        if ($inCollective) {
+            flash('error', 'Diese Buchung ist bereits (teilweise) in einer Sammelrechnung enthalten.');
+            redirect(url('admin/buchung.php', ['id' => $b['id']]));
         }
+        assign_booking_invoice((int)$b['id']);
         redirect(url('admin/rechnung.php', ['id' => $b['id']]));
+    }
+
+    if ($action === 'payment' && $b) {
+        $paid = $b['payment_status'] !== 'bezahlt';
+        $pdo->prepare('UPDATE bookings SET payment_status = ?, paid_at = ? WHERE id = ?')->execute([$paid ? 'bezahlt' : 'offen', $paid ? date('Y-m-d') : null, $b['id']]);
+        flash('ok', $paid ? 'Zahlung als eingegangen markiert.' : 'Zahlung wieder auf offen gesetzt.');
+        redirect(url('admin/buchung.php', ['id' => $b['id']]));
+    }
+
+    if ($action === 'series' && $b && $b['series_ref'] && isset(BOOKING_STATUS[post('status')])) {
+        $errs = series_change_status($b['series_ref'], post('status'), post('notify') === '1');
+        foreach ($errs as $err) flash('error', $err);
+        flash('ok', 'Serie ' . $b['series_ref'] . ': Status auf „' . BOOKING_STATUS[post('status')] . '“ gesetzt' . ($errs ? ' (außer den genannten Terminen).' : '.'));
+        redirect(url('admin/buchung.php', ['id' => $b['id']]));
     }
 
     // Speichern
@@ -51,6 +65,15 @@ if (is_post()) {
         $data[$f] = post($f);
     }
     $data['weekdays_only'] = post('weekdays_only') === '1' ? 1 : 0;
+    $data['company_id'] = null;
+    foreach ($companies as $c) {
+        if ((int)$c['id'] === (int)post('company_id')) {
+            $data['company_id'] = (int)$c['id'];
+            if ($data['company'] === '') $data['company'] = $c['name'];
+            if ($data['vat_id'] === '') $data['vat_id'] = $c['vat_id'];
+            if ($data['billing_address'] === '') $data['billing_address'] = $c['billing_address'];
+        }
+    }
     $listing = null;
     foreach ($listings as $l) {
         if ((int)$l['id'] === (int)$data['listing_id']) $listing = $l;
@@ -89,38 +112,27 @@ if (is_post()) {
 
         $values = [(int)$data['listing_id'], $data['status'], $data['mode'], $data['date_from'], $data['date_to'], max(1, (int)$data['guests']), $data['weekdays_only'],
             $data['name'], $data['email'], $data['phone'], $data['company'], $data['vat_id'], $data['cost_center'], $data['billing_address'],
-            $data['purpose'], $data['message'], $data['admin_note'], $price, $priceDetail];
+            $data['purpose'], $data['message'], $data['admin_note'], $price, $priceDetail, $data['company_id']];
         if ($b) {
             $pdo->prepare("UPDATE bookings SET listing_id=?, status=?, mode=?, date_from=?, date_to=?, guests=?, weekdays_only=?, name=?, email=?, phone=?, company=?, vat_id=?,
-                cost_center=?, billing_address=?, purpose=?, message=?, admin_note=?, price_total=?, price_detail=?, updated_at=datetime('now','localtime') WHERE id=?")
+                cost_center=?, billing_address=?, purpose=?, message=?, admin_note=?, price_total=?, price_detail=?, company_id=?, updated_at=datetime('now','localtime') WHERE id=?")
                 ->execute([...$values, $b['id']]);
             $bookingId = (int)$b['id'];
             $ref = $b['ref'];
         } else {
             $ref = random_ref();
             $pdo->prepare("INSERT INTO bookings (listing_id, status, mode, date_from, date_to, guests, weekdays_only, name, email, phone, company, vat_id,
-                cost_center, billing_address, purpose, message, admin_note, price_total, price_detail, ref, source) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'admin')")
+                cost_center, billing_address, purpose, message, admin_note, price_total, price_detail, company_id, ref, source) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'admin')")
                 ->execute([...$values, $ref]);
             $bookingId = (int)$pdo->lastInsertId();
         }
 
         // Gast informieren
         $statusChanged = !$b || $b['status'] !== $data['status'];
-        if (post('notify') === '1' && $statusChanged && valid_email($data['email']) && in_array($data['status'], ['bestaetigt', 'abgelehnt', 'storniert'], true)) {
-            $texts = [
-                'bestaetigt' => "wir freuen uns, Ihre Buchung zu bestätigen.",
-                'abgelehnt'  => "leider können wir Ihre Anfrage für diesen Zeitraum nicht bestätigen. Gern suchen wir eine Alternative für Sie.",
-                'storniert'  => "Ihre Buchung wurde storniert.",
-            ];
-            $body = "Guten Tag {$data['name']},\n\n" . $texts[$data['status']] . "\n\nUnterkunft: {$listing['title']}\nZeitraum: " . date_de($data['date_from'], true) . ' – ' . date_de($data['date_to'], true)
-                . "\nPersonen: " . (int)$data['guests'] . "\nPreis: " . money($price) . "\nBuchungs-Nr.: $ref\n";
-            if ($data['status'] === 'bestaetigt') {
-                $body .= "\n" . setting('payment_info') . "\n\nDie genaue Adresse und Hinweise zur Anreise senden wir Ihnen vor der Anreise.\n";
-            }
-            $body .= "\nViele Grüße\n" . setting('site_name') . "\n" . setting('contact_phone');
-            $subject = ['bestaetigt' => 'Buchungsbestätigung', 'abgelehnt' => 'Ihre Anfrage', 'storniert' => 'Stornierung'][$data['status']] . " $ref";
-            $sent = send_mail($data['email'], $subject, $body);
-            flash($sent ? 'ok' : 'error', $sent ? 'E-Mail an ' . $data['email'] . ' wurde versendet.' : 'E-Mail an ' . $data['email'] . ' konnte nicht versendet werden. Bitte Absender-Adresse in den Einstellungen prüfen.');
+        if (post('notify') === '1' && $statusChanged && in_array($data['status'], ['bestaetigt', 'abgelehnt', 'storniert'], true)) {
+            $fresh = booking_by_id($bookingId);
+            $sent = $fresh && booking_status_mail($fresh, $data['status']);
+            flash($sent ? 'ok' : 'error', $sent ? 'E-Mail an den Gast wurde versendet.' : 'E-Mail konnte nicht versendet werden. Bitte E-Mail-Adresse und Absender in den Einstellungen prüfen.');
         }
         flash('ok', $b ? 'Buchung gespeichert.' : 'Buchung angelegt.');
         redirect(url('admin/buchung.php', ['id' => $bookingId]));
@@ -136,8 +148,10 @@ admin_header($b ? 'Buchung ' . $b['ref'] : 'Neue Buchung', 'buchungen');
   <h1><?= $b ? 'Buchung ' . e($b['ref']) . ' ' . status_badge($b['status']) : 'Buchung eintragen' ?></h1>
   <?php if ($b): ?>
   <div class="actions">
+    <?php if (!$inCollective && ($b['invoice_no'] || !booking_on_account($b))): ?>
     <form method="post" class="inline-form" action="<?= e(url('admin/buchung.php', ['id' => $b['id']])) ?>"><?= csrf_field() ?><input type="hidden" name="action" value="invoice">
-      <button class="button button-ghost button-small" type="submit"><?= $b['invoice_no'] ? 'Rechnung ' . e($b['invoice_no']) . ' öffnen' : 'Rechnung erstellen' ?></button></form>
+      <button class="button button-ghost button-small" type="submit"><?= $b['invoice_no'] ? 'Rechnung ' . e($b['invoice_no']) . ' öffnen' : 'Einzelrechnung erstellen' ?></button></form>
+    <?php endif; ?>
     <?php if ($b['email']): ?><a class="button button-ghost button-small" href="mailto:<?= e($b['email']) ?>?subject=<?= rawurlencode('Ihre Buchung ' . $b['ref']) ?>">E-Mail schreiben</a><?php endif; ?>
   </div>
   <?php endif; ?>
@@ -153,6 +167,20 @@ admin_header($b ? 'Buchung ' . $b['ref'] : 'Neue Buchung', 'buchungen');
     <dt>Zeitraum</dt><dd><?= date_de($b['date_from'], true) ?> – <?= date_de($b['date_to'], true) ?> (<?= $nights ?> Nächte)<?= $b['weekdays_only'] ? ' · <strong>Wochenpendler, nur Mo–Fr</strong>' : '' ?></dd>
     <dt>Eingegangen</dt><dd><?= e($b['created_at']) ?> (<?= $b['source'] === 'admin' ? 'manuell eingetragen' : 'über die Webseite' ?>)</dd>
     <?php if ($b['purpose']): ?><dt>Anlass</dt><dd><?= e($b['purpose']) ?></dd><?php endif; ?>
+    <?php if ($b['company_id']): ?><dt>Firmenkonto</dt><dd><a href="<?= e(url('admin/firmen.php', ['id' => $b['company_id']])) ?>"><?= e($b['company_name']) ?></a> · <?= booking_on_account($b) ? 'Abrechnung per Sammelrechnung' : 'Firmenkonto nicht freigeschaltet' ?></dd><?php endif; ?>
+    <?php if ($b['booker_name']): ?><dt>Gebucht von</dt><dd><?= e($b['booker_name']) ?> (<?= e($b['booker_email']) ?>)</dd><?php endif; ?>
+    <?php if ($b['cost_center']): ?><dt>Kostenstelle</dt><dd><?= e($b['cost_center']) ?></dd><?php endif; ?>
+    <?php if ($b['admin_note']): ?><dt>Interne Notiz</dt><dd><?= nl2br(e($b['admin_note'])) ?></dd><?php endif; ?>
+    <dt>Abrechnung</dt><dd>
+      <?php if ($inCollective): ?>
+        <?php foreach ($inCollective as $ic): ?><a href="<?= e(url('admin/sammelrechnung.php', ['id' => $ic['id']])) ?>" target="_blank">Sammelrechnung <?= e($ic['invoice_no']) ?></a> (<?= date_de($ic['period_from']) ?> – <?= date_de($ic['period_to']) ?>, <?= money((float)$ic['amount']) ?>)<br><?php endforeach; ?>
+      <?php elseif ($b['invoice_no']): ?>
+        Einzelrechnung <?= e($b['invoice_no']) ?> · Zahlung: <?= $b['payment_status'] === 'bezahlt' ? '<span class="badge badge-ok">bezahlt ' . date_de($b['paid_at']) . '</span>' : '<span class="badge badge-warn">offen</span>' ?>
+        <form method="post" action="<?= e(url('admin/buchung.php', ['id' => $b['id']])) ?>" class="inline-form"><?= csrf_field() ?><input type="hidden" name="action" value="payment"><button class="button button-ghost button-small" type="submit"><?= $b['payment_status'] === 'bezahlt' ? 'Auf offen setzen' : 'Zahlung eingegangen' ?></button></form>
+      <?php else: ?>
+        <?= booking_on_account($b) ? 'Wird mit der nächsten Sammelrechnung abgerechnet.' : 'Noch keine Rechnung.' ?>
+      <?php endif; ?>
+    </dd>
     <?php if ($b['message']): ?><dt>Nachricht des Gastes</dt><dd><?= nl2br(e($b['message'])) ?></dd><?php endif; ?>
     <dt>Preis</dt><dd>
       <?php if ($lines): ?><table class="data" style="max-width:520px"><?php foreach ($lines as [$t, $v]): ?><tr><td><?= e($t) ?></td><td class="num"><?= money((float)$v) ?></td></tr><?php endforeach; ?>
@@ -165,12 +193,30 @@ admin_header($b ? 'Buchung ' . $b['ref'] : 'Neue Buchung', 'buchungen');
       <form method="post" action="<?= e(url('admin/buchung.php', ['id' => $b['id']])) ?>" class="inline-form">
         <?= csrf_field() ?>
         <?php foreach ($fields as $f): if ($f === 'status') continue; ?><input type="hidden" name="<?= e($f) ?>" value="<?= e($f === 'price_total' ? number_format((float)$b[$f], 2, ',', '') : (string)$b[$f]) ?>"><?php endforeach; ?>
-        <input type="hidden" name="weekdays_only" value="<?= (int)$b['weekdays_only'] ?>"><input type="hidden" name="notify" value="1">
+        <input type="hidden" name="weekdays_only" value="<?= (int)$b['weekdays_only'] ?>"><input type="hidden" name="company_id" value="<?= (int)$b['company_id'] ?>"><input type="hidden" name="notify" value="1">
         <button class="button" name="status" value="bestaetigt" type="submit">Bestätigen &amp; Gast informieren</button>
         <button class="button button-danger" name="status" value="abgelehnt" type="submit">Ablehnen &amp; Gast informieren</button>
       </form>
     </div>
   <?php endif; ?>
+</div>
+<?php endif; ?>
+
+<?php if ($b && $b['series_ref']): $series = series_bookings($b['series_ref']); ?>
+<div class="panel">
+  <h2>Serie <?= e($b['series_ref']) ?> · <?= count($series) ?> Termine · <?= money(array_sum(array_column($series, 'price_total'))) ?></h2>
+  <div class="table-wrap"><table class="data">
+    <tr><th>Nr.</th><th>Zeitraum</th><th class="num">Preis</th><th>Status</th></tr>
+    <?php foreach ($series as $sb): ?><tr<?= (int)$sb['id'] === (int)$b['id'] ? ' style="font-weight:600"' : '' ?>><td><a href="<?= e(url('admin/buchung.php', ['id' => $sb['id']])) ?>"><?= e($sb['ref']) ?></a></td>
+      <td><?= date_de($sb['date_from'], true) ?> – <?= date_de($sb['date_to'], true) ?></td><td class="num"><?= money((float)$sb['price_total']) ?></td><td><?= status_badge($sb['status']) ?></td></tr><?php endforeach; ?>
+  </table></div>
+  <form method="post" action="<?= e(url('admin/buchung.php', ['id' => $b['id']])) ?>" class="actions" style="margin-top:12px">
+    <?= csrf_field() ?><input type="hidden" name="action" value="series">
+    <label class="check" style="width:100%"><input type="checkbox" name="notify" value="1" checked> Gast (und buchende Person) mit einer E-Mail über alle Termine informieren</label>
+    <button class="button" name="status" value="bestaetigt" type="submit">Ganze Serie bestätigen</button>
+    <button class="button button-danger" name="status" value="abgelehnt" type="submit">Ganze Serie ablehnen</button>
+    <button class="button button-ghost" name="status" value="storniert" type="submit">Ganze Serie stornieren</button>
+  </form>
 </div>
 <?php endif; ?>
 
@@ -193,7 +239,11 @@ admin_header($b ? 'Buchung ' . $b['ref'] : 'Neue Buchung', 'buchungen');
     <div class="field"><label for="email">E-Mail</label><input type="email" id="email" name="email" value="<?= e($data['email']) ?>"></div>
     <div class="field"><label for="phone">Telefon</label><input type="tel" id="phone" name="phone" value="<?= e($data['phone']) ?>"></div>
     <div class="field"><label for="purpose">Anlass</label><input type="text" id="purpose" name="purpose" value="<?= e($data['purpose']) ?>"></div>
-    <div class="field"><label for="company">Firma</label><input type="text" id="company" name="company" value="<?= e($data['company']) ?>"></div>
+    <div class="field"><label for="company_id">Firmenkonto</label>
+      <select id="company_id" name="company_id"><option value="">– kein Firmenkonto –</option>
+        <?php foreach ($companies as $c): ?><option value="<?= (int)$c['id'] ?>" <?= (int)$c['id'] === (int)($data['company_id'] ?? 0) ? 'selected' : '' ?>><?= e($c['name']) ?><?= $c['status'] !== 'freigeschaltet' ? ' (' . e(COMPANY_STATUS[$c['status']] ?? '') . ')' : '' ?></option><?php endforeach; ?>
+      </select><p class="hint">Mit freigeschaltetem Firmenkonto wird die Buchung per Sammelrechnung abgerechnet.</p></div>
+    <div class="field"><label for="company">Firma (Name auf Rechnung)</label><input type="text" id="company" name="company" value="<?= e($data['company']) ?>"></div>
     <div class="field"><label for="vat_id">USt-IdNr.</label><input type="text" id="vat_id" name="vat_id" value="<?= e($data['vat_id']) ?>"></div>
     <div class="field"><label for="cost_center">Kostenstelle / Bestell-Nr.</label><input type="text" id="cost_center" name="cost_center" value="<?= e($data['cost_center']) ?>"></div>
     <div class="field"><label for="price_total">Gesamtpreis (€)</label><input type="text" inputmode="decimal" id="price_total" name="price_total" value="<?= $data['price_total'] === '' ? '' : e(number_format((float)$data['price_total'], 2, ',', '')) ?>"><p class="hint">Leer lassen = automatisch berechnen.</p></div>

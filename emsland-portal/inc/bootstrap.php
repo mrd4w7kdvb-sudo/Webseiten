@@ -18,6 +18,8 @@ mb_internal_encoding('UTF-8');
 require __DIR__ . '/db.php';
 require __DIR__ . '/helpers.php';
 require __DIR__ . '/pricing.php';
+require __DIR__ . '/booking.php';
+require __DIR__ . '/account.php';
 
 if (session_status() === PHP_SESSION_NONE) {
     session_name('eqsid');

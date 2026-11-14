@@ -21,9 +21,10 @@ page_header('Unterkünfte für Firmen, Kliniken und Projekte', 'Unterkünfte im 
         <li><strong>Wochenpendler</strong>: Unterkünfte nur von Montag bis Freitag</li>
         <li><strong>Teams</strong>: Wohnungen mit Einzelbetten und Stellplatz für Transporter</li>
         <li><strong>Kontingente</strong>: feste Apartments für wechselnde Mitarbeitende, z. B. für Kliniken</li>
+        <li><strong>Firmenkonto</strong>: mehrere Kolleginnen und Kollegen, Kostenstellen, Preisobergrenze und monatliche Sammelrechnung</li>
         <li><strong>Persönliche Suche</strong>: Schicken Sie uns Ihren Bedarf, wir melden uns mit passenden Angeboten</li>
       </ul>
-      <p><a class="button button-ghost" href="<?= e(url('suche.php', ['modus' => 'business'])) ?>">Selbst suchen</a></p>
+      <p><a class="button" href="<?= e(url('konto/registrieren.php')) ?>">Firmenkonto beantragen</a> <a class="button button-ghost" href="<?= e(url('suche.php', ['modus' => 'business'])) ?>">Selbst suchen</a></p>
     </div>
 
     <div class="card" style="padding:24px" id="formular">

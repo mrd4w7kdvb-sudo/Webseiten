@@ -9,37 +9,92 @@ if (!$l || !$l['active']) {
 $id = (int)$l['id'];
 
 $purposes = ['Urlaub / privat', 'Praxis- oder Klinikvertretung', 'Bau- oder Projektleitung', 'Montage / Handwerk', 'Sonstiges beruflich'];
+$user = current_user();
+$firm = $user && $user['role'] === 'firma';
+$costCenters = $firm ? company_cost_centers((int)$user['company_id']) : [];
+$maxPrice = $firm ? (float)$user['company_max_price'] : 0.0;
 
 $in = [
     'von' => get('von'), 'bis' => get('bis'), 'gaeste' => get('gaeste') ?: (string)min(2, (int)$l['max_guests']),
-    'reise' => get('modus') === 'business' ? 'beruflich' : 'privat',
-    'purpose' => get('modus') === 'business' ? $purposes[1] : $purposes[0],
-    'name' => '', 'email' => '', 'phone' => '', 'company' => '', 'vat_id' => '', 'cost_center' => '',
-    'billing_address' => '', 'message' => '', 'weekdays_only' => '', 'agb' => '',
+    'reise' => ($firm || get('modus') === 'business') ? 'beruflich' : 'privat',
+    'purpose' => ($firm || get('modus') === 'business') ? $purposes[1] : $purposes[0],
+    'name' => $firm ? $user['name'] : '', 'email' => $firm ? $user['email'] : '', 'phone' => $firm ? $user['phone'] : '',
+    'company' => '', 'vat_id' => '', 'cost_center' => '', 'billing_address' => '', 'message' => '', 'agb' => '',
+    'serie' => '', 'serie_bis' => '', 'skip_busy' => '',
 ];
 $errors = [];
+$busyWeeks = [];
 
 if (is_post()) {
     check_csrf();
     foreach (array_keys($in) as $k) {
         $in[$k] = post($k);
     }
+    if ($firm) {
+        $in['reise'] = 'beruflich';
+        $in['company'] = $user['company_name'];
+        $in['vat_id'] = (string)$user['company_vat_id'];
+        $in['billing_address'] = (string)$user['company_billing_address'];
+    }
+    $business = $in['reise'] === 'beruflich';
     if (looks_like_spam()) {
         $errors[] = 'Ihre Anfrage konnte nicht gesendet werden. Bitte versuchen Sie es erneut.';
     }
     $guests = (int)$in['gaeste'];
-    $quote = calc_price($l, $in['von'], $in['bis'], $guests);
-    if (isset($quote['error'])) {
-        $errors[] = $quote['error'];
-    } elseif ($in['von'] < date('Y-m-d')) {
-        $errors[] = 'Die Anreise darf nicht in der Vergangenheit liegen.';
-    } elseif (!is_available($id, $in['von'], $in['bis'])) {
-        $errors[] = 'Im gewählten Zeitraum ist die Unterkunft leider schon belegt. Bitte wählen Sie andere Daten.';
+
+    // Termine bestimmen: einzeln oder als Wochenserie (Wochenpendler)
+    $stays = [];
+    $d1 = valid_date($in['von']);
+    $d2 = valid_date($in['bis']);
+    if ($business && $in['serie'] === '1') {
+        $end = valid_date($in['serie_bis']);
+        if (!$d1 || !$d2 || $d2 <= $d1) {
+            $errors[] = 'Bitte An- und Abreise der ersten Woche wählen.';
+        } elseif ((int)$d1->diff($d2)->days > 6) {
+            $errors[] = 'Bei einer Serie umfasst ein Termin höchstens eine Woche (z. B. Montag bis Freitag).';
+        } elseif (!$end || $end < $d2->modify('+7 days')) {
+            $errors[] = 'Bitte für die Serie ein Enddatum mindestens eine Woche nach der ersten Abreise angeben.';
+        } else {
+            for ($k = 0; $k < 52; $k++) {
+                $f = $d1->modify("+$k week");
+                $t = $d2->modify("+$k week");
+                if ($t > $end) break;
+                $stays[] = [$f->format('Y-m-d'), $t->format('Y-m-d')];
+            }
+        }
+    } else {
+        $stays[] = [$in['von'], $in['bis']];
     }
-    if (mb_strlen($in['name']) < 2) $errors[] = 'Bitte Ihren Namen angeben.';
+
+    $quotes = [];
+    if (!$errors) {
+        if ($in['von'] < date('Y-m-d')) {
+            $errors[] = 'Die Anreise darf nicht in der Vergangenheit liegen.';
+        }
+        foreach ($stays as [$f, $t]) {
+            $q = calc_price($l, $f, $t, $guests);
+            if (isset($q['error'])) {
+                $errors[] = $q['error'];
+                break;
+            }
+            if (!is_available($id, $f, $t)) {
+                $busyWeeks[] = date_de($f) . ' – ' . date_de($t);
+                continue;
+            }
+            $quotes[] = [$f, $t, $q];
+        }
+        if (!$errors && $busyWeeks) {
+            if (count($stays) === 1) {
+                $errors[] = 'Im gewählten Zeitraum ist die Unterkunft leider schon belegt. Bitte wählen Sie andere Daten.';
+            } elseif ($in['skip_busy'] !== '1' || !$quotes) {
+                $errors[] = 'Diese Wochen sind schon belegt: ' . implode(', ', $busyWeeks) . '. Sie können die freien Wochen trotzdem anfragen (Häkchen unten setzen).';
+            }
+        }
+    }
+    if (mb_strlen($in['name']) < 2) $errors[] = $firm ? 'Bitte den Namen des Gastes angeben.' : 'Bitte Ihren Namen angeben.';
     if (!valid_email($in['email'])) $errors[] = 'Bitte eine gültige E-Mail-Adresse angeben.';
-    if ($in['reise'] !== 'beruflich' || !in_array($in['purpose'], $purposes, true)) {
-        $in['purpose'] = $in['reise'] === 'beruflich' ? $purposes[4] : $purposes[0];
+    if (!$business || !in_array($in['purpose'], $purposes, true)) {
+        $in['purpose'] = $business ? $purposes[4] : $purposes[0];
     }
     if ($in['agb'] !== '1') $errors[] = 'Bitte bestätigen Sie die Buchungsbedingungen und den Datenschutzhinweis.';
     foreach (['name' => 120, 'email' => 190, 'phone' => 60, 'company' => 160, 'vat_id' => 40, 'cost_center' => 80, 'billing_address' => 600, 'message' => 3000] as $k => $max) {
@@ -47,25 +102,47 @@ if (is_post()) {
     }
 
     if (!$errors) {
-        $business = $in['reise'] === 'beruflich';
-        $mode = $quote['tariff'] === 'langzeit' ? 'langzeit' : ($business ? 'business' : 'urlaub');
-        $ref = random_ref();
-        db()->prepare('INSERT INTO bookings (ref, listing_id, status, mode, date_from, date_to, guests, weekdays_only, name, email, phone, company, vat_id,
-            cost_center, billing_address, purpose, message, price_total, price_detail) VALUES (?, ?, \'angefragt\', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-            ->execute([$ref, $id, $mode, $in['von'], $in['bis'], $guests, $business && $in['weekdays_only'] === '1' ? 1 : 0,
+        $seriesRef = count($quotes) > 1 ? 'S-' . random_ref(6) : null;
+        $note = '';
+        $total = array_sum(array_map(fn($x) => $x[2]['total'], $quotes));
+        $nightsAll = array_sum(array_map(fn($x) => $x[2]['nights'], $quotes));
+        if ($maxPrice > 0 && $nightsAll > 0 && $total / $nightsAll > $maxPrice) {
+            $note = sprintf('Hinweis: Durchschnitt %s pro Nacht liegt über der Reiserichtlinie der Firma (%s).', money($total / $nightsAll), money($maxPrice));
+        }
+        $ins = db()->prepare('INSERT INTO bookings (ref, listing_id, status, mode, date_from, date_to, guests, weekdays_only, name, email, phone, company, vat_id,
+            cost_center, billing_address, purpose, message, price_total, price_detail, company_id, booked_by, series_ref, admin_note)
+            VALUES (?, ?, \'angefragt\', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+        $refs = [];
+        db()->beginTransaction();
+        foreach ($quotes as [$f, $t, $q]) {
+            $mode = $q['tariff'] === 'langzeit' ? 'langzeit' : ($business ? 'business' : 'urlaub');
+            $ref = random_ref();
+            $ins->execute([$ref, $id, $mode, $f, $t, $guests, $seriesRef ? 1 : 0,
                 $in['name'], $in['email'], $in['phone'], $business ? $in['company'] : '', $business ? $in['vat_id'] : '',
                 $business ? $in['cost_center'] : '', $business ? $in['billing_address'] : '', $in['purpose'], $in['message'],
-                $quote['total'], json_encode($quote['lines'], JSON_UNESCAPED_UNICODE)]);
+                $q['total'], json_encode($q['lines'], JSON_UNESCAPED_UNICODE),
+                $firm ? (int)$user['company_id'] : null, $firm ? (int)$user['id'] : null, $seriesRef, $note]);
+            $refs[] = [$ref, $f, $t];
+        }
+        db()->commit();
 
-        $summary = "Unterkunft: {$l['title']}\nZeitraum: " . date_de($in['von']) . ' – ' . date_de($in['bis']) . " ({$quote['nights']} Nächte)\n"
-            . "Personen: $guests\nPreis laut Anfrage: " . money($quote['total']) . "\nAnfrage-Nr.: $ref";
-        admin_notify("Neue Buchungsanfrage $ref", "Neue Anfrage von {$in['name']} ({$in['email']})\n\n$summary\nZweck: {$in['purpose']}"
-            . ($in['company'] ? "\nFirma: {$in['company']}" : '') . ($in['message'] ? "\n\nNachricht:\n{$in['message']}" : ''));
-        send_mail($in['email'], 'Ihre Anfrage bei ' . setting('site_name') . " ($ref)",
-            "Guten Tag {$in['name']},\n\nvielen Dank für Ihre Anfrage. Wir prüfen die Verfügbarkeit und melden uns in der Regel innerhalb von 24 Stunden.\n\n$summary\n\nDies ist noch keine Buchungsbestätigung.\n\nViele Grüße\n" . setting('site_name') . "\n" . setting('contact_phone'));
+        $first = $refs[0][0];
+        $label = $seriesRef ?: $first;
+        $dates = implode("\n", array_map(fn($r) => '  ' . date_de($r[1], true) . ' – ' . date_de($r[2], true), $refs));
+        $summary = "Unterkunft: {$l['title']}\n" . ($seriesRef ? 'Serie mit ' . count($refs) . " Terminen:\n$dates" : 'Zeitraum: ' . date_de($in['von']) . ' – ' . date_de($in['bis']) . " ({$quotes[0][2]['nights']} Nächte)")
+            . "\nPersonen: $guests\nPreis laut Anfrage: " . money($total) . "\nAnfrage-Nr.: $label";
+        $who = $firm ? "{$user['name']} ({$user['company_name']}) für Gast {$in['name']}" : "{$in['name']} ({$in['email']})";
+        admin_notify("Neue Buchungsanfrage $label", "Neue Anfrage von $who\n\n$summary\nZweck: {$in['purpose']}"
+            . ($in['company'] ? "\nFirma: {$in['company']}" : '') . ($in['cost_center'] ? "\nKostenstelle: {$in['cost_center']}" : '') . ($note ? "\n$note" : '') . ($in['message'] ? "\n\nNachricht:\n{$in['message']}" : ''));
+        notify_host($l, "Neue Anfrage für {$l['title']} ($label)", "Es gibt eine neue Buchungsanfrage:\n\n$summary\n\nBitte im Gastgeber-Bereich prüfen:\n" . absolute_url('konto/index.php'));
+        $mailText = "Guten Tag {$in['name']},\n\nvielen Dank für Ihre Anfrage. Wir prüfen die Verfügbarkeit und melden uns in der Regel innerhalb von 24 Stunden.\n\n$summary\n\nDies ist noch keine Buchungsbestätigung.\n\nViele Grüße\n" . setting('site_name') . "\n" . setting('contact_phone');
+        send_mail($in['email'], 'Ihre Anfrage bei ' . setting('site_name') . " ($label)", $mailText);
+        if ($firm && mb_strtolower($user['email']) !== mb_strtolower($in['email'])) {
+            send_mail($user['email'], 'Ihre Anfrage bei ' . setting('site_name') . " ($label, für {$in['name']})", $mailText);
+        }
 
-        $_SESSION['last_ref'] = $ref;
-        redirect(url('danke.php', ['ref' => $ref]));
+        $_SESSION['last_ref'] = $first;
+        redirect(url('danke.php', ['ref' => $first]));
     }
 }
 
@@ -127,7 +204,7 @@ page_header($l['title'] . ' in ' . ($l['place_name'] ?? 'Emsland'), $l['summary'
         <h2>Preise</h2>
         <table class="price-table">
           <tr><th>Leistung</th><th>Preis</th></tr>
-          <tr><td>Pro Nacht (bis <?= (int)$l['base_guests'] ?> Personen)</td><td><?= money((float)$l['price_night']) ?></td></tr>
+          <tr><td>Pro Nacht (bis <?= (int)$l['base_guests'] ?> <?= (int)$l['base_guests'] === 1 ? 'Person' : 'Personen' ?>)</td><td><?= money((float)$l['price_night']) ?></td></tr>
           <?php if ((float)$l['extra_guest_fee'] > 0): ?><tr><td>Jede weitere Person pro Nacht</td><td><?= money((float)$l['extra_guest_fee']) ?></td></tr><?php endif; ?>
           <?php if ((float)$l['weekly_discount'] > 0): ?><tr><td>Rabatt ab 7 Nächten</td><td>−<?= e(rtrim(rtrim(number_format((float)$l['weekly_discount'], 1, ',', ''), '0'), ',')) ?> %</td></tr><?php endif; ?>
           <?php if ($l['mode_langzeit'] && (float)$l['month_price'] > 0): ?><tr><td>Monatspreis ab 28 Nächten (inkl. Nebenkosten)</td><td><?= money((float)$l['month_price']) ?></td></tr><?php endif; ?>
@@ -179,31 +256,58 @@ page_header($l['title'] . ' in ' . ($l['place_name'] ?? 'Emsland'), $l['summary'
             <?php endif; ?>
           </div>
 
+          <?php if ($firm): ?>
+            <div class="alert alert-info" style="width:auto;margin:0 0 12px">Buchung über das Firmenkonto <strong><?= e($user['company_name']) ?></strong>.
+              <?= $user['company_status'] === 'freigeschaltet' ? 'Abrechnung per Sammelrechnung.' : 'Ihr Konto wird noch geprüft.' ?></div>
+            <?php if ($maxPrice > 0 && (float)$l['price_night'] > $maxPrice && !($l['mode_langzeit'] && (float)$l['month_price'] / 30 <= $maxPrice)): ?>
+              <div class="warn-box">Der Nachtpreis liegt über Ihrer Reiserichtlinie (<?= money($maxPrice) ?> pro Nacht).</div>
+            <?php endif; ?>
+            <input type="hidden" name="reise" value="beruflich">
+          <?php else: ?>
           <fieldset>
             <legend>Ich reise …</legend>
             <label class="check"><input type="radio" name="reise" value="privat" <?= $in['reise'] !== 'beruflich' ? 'checked' : '' ?> data-mode-switch="urlaub"> privat</label>
             <label class="check"><input type="radio" name="reise" value="beruflich" <?= $in['reise'] === 'beruflich' ? 'checked' : '' ?> data-mode-switch="business"> beruflich (Rechnung auf Firma möglich)</label>
           </fieldset>
+          <?php endif; ?>
 
           <div class="business-only">
             <div class="field">
               <label for="b-purpose">Anlass</label>
               <select id="b-purpose" name="purpose">
-                <?php foreach ($purposes as $p): ?><option <?= $p === $in['purpose'] ? 'selected' : '' ?>><?= e($p) ?></option><?php endforeach; ?>
+                <?php foreach (array_slice($purposes, 1) as $p): ?><option <?= $p === $in['purpose'] ? 'selected' : '' ?>><?= e($p) ?></option><?php endforeach; ?>
               </select>
             </div>
-            <label class="check"><input type="checkbox" name="weekdays_only" value="1" <?= $in['weekdays_only'] === '1' ? 'checked' : '' ?>> Ich pendle und bin nur Mo–Fr vor Ort (Wochenenden können ggf. anders vergeben werden)</label>
-            <div class="field"><label for="b-company">Firma / Klinik / Praxis</label><input type="text" id="b-company" name="company" value="<?= e($in['company']) ?>" autocomplete="organization"></div>
-            <div class="field-row">
-              <div class="field"><label for="b-vat">USt-IdNr.</label><input type="text" id="b-vat" name="vat_id" value="<?= e($in['vat_id']) ?>"></div>
-              <div class="field"><label for="b-cc">Kostenstelle / Bestell-Nr.</label><input type="text" id="b-cc" name="cost_center" value="<?= e($in['cost_center']) ?>"></div>
-            </div>
-            <div class="field"><label for="b-billing">Rechnungsadresse</label><textarea id="b-billing" name="billing_address" rows="3" style="min-height:80px"><?= e($in['billing_address']) ?></textarea></div>
+            <fieldset>
+              <legend>Wochenpendler</legend>
+              <label class="check"><input type="checkbox" name="serie" value="1" <?= $in['serie'] === '1' ? 'checked' : '' ?>> <span>Jede Woche wiederholen (z. B. Mo–Fr). An- und Abreise oben gelten für die erste Woche. Die Wochenenden bleiben für andere Gäste frei. Der Preis oben gilt pro Woche.</span></label>
+              <div class="field"><label for="b-serie-bis">Letzte Abreise spätestens am</label><input type="date" id="b-serie-bis" name="serie_bis" min="<?= date('Y-m-d') ?>" value="<?= e($in['serie_bis']) ?>"></div>
+              <?php if ($busyWeeks && count($busyWeeks) > 0 && $in['serie'] === '1'): ?>
+                <label class="check"><input type="checkbox" name="skip_busy" value="1"> Belegte Wochen auslassen und nur die freien anfragen</label>
+              <?php endif; ?>
+            </fieldset>
+            <?php if ($firm): ?>
+              <div class="field"><label for="b-cc">Kostenstelle / Projekt</label>
+                <?php if ($costCenters): ?>
+                  <select id="b-cc" name="cost_center"><option value="">–</option>
+                    <?php foreach ($costCenters as $c): ?><option <?= $c['name'] === $in['cost_center'] ? 'selected' : '' ?>><?= e($c['name']) ?></option><?php endforeach; ?></select>
+                <?php else: ?>
+                  <input type="text" id="b-cc" name="cost_center" value="<?= e($in['cost_center']) ?>"><p class="hint">Kostenstellen können Sie unter „Team &amp; Kostenstellen“ hinterlegen.</p>
+                <?php endif; ?></div>
+            <?php else: ?>
+              <div class="field"><label for="b-company">Firma / Klinik / Praxis</label><input type="text" id="b-company" name="company" value="<?= e($in['company']) ?>" autocomplete="organization"></div>
+              <div class="field-row">
+                <div class="field"><label for="b-vat">USt-IdNr.</label><input type="text" id="b-vat" name="vat_id" value="<?= e($in['vat_id']) ?>"></div>
+                <div class="field"><label for="b-cc">Kostenstelle / Bestell-Nr.</label><input type="text" id="b-cc" name="cost_center" value="<?= e($in['cost_center']) ?>"></div>
+              </div>
+              <div class="field"><label for="b-billing">Rechnungsadresse</label><textarea id="b-billing" name="billing_address" rows="3" style="min-height:80px"><?= e($in['billing_address']) ?></textarea></div>
+              <p class="hint">Regelmäßig für Mitarbeitende buchen? <a href="<?= e(url('konto/registrieren.php')) ?>">Firmenkonto mit Sammelrechnung</a></p>
+            <?php endif; ?>
           </div>
 
-          <div class="field"><label for="b-name">Name</label><input required type="text" id="b-name" name="name" value="<?= e($in['name']) ?>" autocomplete="name"></div>
-          <div class="field"><label for="b-email">E-Mail</label><input required type="email" id="b-email" name="email" value="<?= e($in['email']) ?>" autocomplete="email"></div>
-          <div class="field"><label for="b-phone">Telefon (optional)</label><input type="tel" id="b-phone" name="phone" value="<?= e($in['phone']) ?>" autocomplete="tel"></div>
+          <div class="field"><label for="b-name"><?= $firm ? 'Name des Gastes' : 'Name' ?></label><input required type="text" id="b-name" name="name" value="<?= e($in['name']) ?>" autocomplete="<?= $firm ? 'off' : 'name' ?>"></div>
+          <div class="field"><label for="b-email"><?= $firm ? 'E-Mail des Gastes' : 'E-Mail' ?></label><input required type="email" id="b-email" name="email" value="<?= e($in['email']) ?>" autocomplete="<?= $firm ? 'off' : 'email' ?>"></div>
+          <div class="field"><label for="b-phone">Telefon (optional)</label><input type="tel" id="b-phone" name="phone" value="<?= e($in['phone']) ?>" autocomplete="<?= $firm ? 'off' : 'tel' ?>"></div>
           <div class="field"><label for="b-msg">Nachricht (optional)</label><textarea id="b-msg" name="message" rows="3"><?= e($in['message']) ?></textarea></div>
           <label class="check"><input required type="checkbox" name="agb" value="1" <?= $in['agb'] === '1' ? 'checked' : '' ?>>
             <span>Ich habe die <a href="<?= e(url('seite.php', ['s' => 'agb'])) ?>" target="_blank">Buchungsbedingungen</a> und den <a href="<?= e(url('seite.php', ['s' => 'datenschutz'])) ?>" target="_blank">Datenschutzhinweis</a> gelesen.</span></label>

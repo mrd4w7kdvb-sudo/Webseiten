@@ -64,12 +64,12 @@ img { max-width: 100%; display: block; }
 /* Buttons & Formulare */
 .button, button.button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; background: var(--teal); color: #fff; text-decoration: none; font: 600 1rem "Source Sans 3", sans-serif; padding: 11px 22px; border-radius: 999px; border: 2px solid var(--teal); cursor: pointer; }
 .button:hover { background: var(--teal-dark); border-color: var(--teal-dark); }
-.button-ghost { background: transparent; color: var(--teal); }
-.button-ghost:hover { background: var(--teal); color: #fff; }
-.button-accent { background: var(--accent); border-color: var(--accent); }
-.button-accent:hover { background: #a2532d; border-color: #a2532d; }
+.button.button-ghost { background: transparent; color: var(--teal); }
+.button.button-ghost:hover { background: var(--teal); color: #fff; }
+.button.button-accent { background: var(--accent); border-color: var(--accent); }
+.button.button-accent:hover { background: #a2532d; border-color: #a2532d; }
 .button-small { padding: 6px 14px; font-size: .9rem; }
-.button-danger { background: var(--bad); border-color: var(--bad); }
+.button.button-danger { background: var(--bad); border-color: var(--bad); }
 .button-block { width: 100%; }
 label { display: block; font-weight: 600; font-size: .92rem; margin-bottom: 4px; }
 input[type=text], input[type=email], input[type=tel], input[type=number], input[type=date], input[type=password], input[type=url], select, textarea {
@@ -122,7 +122,7 @@ legend { font-weight: 600; padding: 0 6px; }
 .cta-band { background: var(--teal); color: #fff; border-radius: 18px; padding: 36px; display: flex; justify-content: space-between; align-items: center; gap: 24px; flex-wrap: wrap; }
 .cta-band h2 { color: #fff; margin: 0 0 .3em; }
 .cta-band p { margin: 0; color: #dbe8e9; }
-.cta-band .button { background: #fff; color: var(--teal-dark); border-color: #fff; }
+.cta-band .button, .cta-band .button:hover { background: #fff; color: var(--teal-dark); border-color: #fff; }
 
 /* Karten / Ergebnisliste */
 .card { background: #fff; border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
@@ -240,12 +240,20 @@ dl.kv dt { color: var(--muted); }
 dl.kv dd { margin: 0; }
 code.copy { background: var(--sand); padding: 4px 8px; border-radius: 6px; word-break: break-all; display: inline-block; font-size: .85rem; }
 
+/* Kundenkonto */
+.account-bar { background: #fff; border-bottom: 1px solid var(--line); }
+.account-bar-inner { display: flex; justify-content: space-between; align-items: center; gap: 10px 20px; flex-wrap: wrap; padding: 10px 0; }
+.account-main { padding: 32px 0 24px; }
+.account-main .panel { box-shadow: var(--shadow); }
+.warn-box { background: #fbf1df; border: 1px solid #ecd3a6; color: #6d4709; border-radius: 10px; padding: 10px 14px; margin: 10px 0; font-size: .95rem; }
+.series-list { max-height: 220px; overflow: auto; font-size: .92rem; margin: 6px 0 0; padding-left: 18px; }
+
 /* Rechnung (Druck) */
 .invoice { background: #fff; width: min(820px, 100% - 32px); margin: 24px auto; padding: 48px; box-shadow: var(--shadow); font-size: 15px; }
 .invoice h1 { font-size: 1.8rem; }
 .invoice table { width: 100%; border-collapse: collapse; margin: 18px 0; }
 .invoice th, .invoice td { padding: 8px 4px; border-bottom: 1px solid #ddd; text-align: left; }
-.invoice td.num, .invoice th.num { text-align: right; }
+.invoice td.num, .invoice th.num { text-align: right; white-space: nowrap; padding-left: 16px; }
 .invoice .head { display: flex; justify-content: space-between; gap: 24px; margin-bottom: 36px; }
 .no-print { text-align: center; margin: 16px; }
 @media print { .no-print { display: none; } body { background: #fff; } .invoice { box-shadow: none; margin: 0; width: 100%; padding: 0; } }

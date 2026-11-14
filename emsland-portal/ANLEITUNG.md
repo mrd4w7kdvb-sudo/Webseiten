@@ -49,15 +49,47 @@ Dauer: etwa 20 Minuten.
 | Firmen- und Gastgeber-Anfragen | **Firmen & Gastgeber** |
 | Buchungen für Steuerberatung | **Buchungen** → „Als CSV exportieren“ |
 | Weiteren Admin anlegen, Passwort ändern | **Einstellungen** |
+| Firmenkonto freischalten | **Firmenkonten** |
+| Monatsabrechnung für Firmen | **Sammelrechnungen** |
+| Gastgeber einladen | **Gastgeber-Zugänge** |
 
 Nur **bestätigte** Buchungen und Sperrzeiten blockieren den Kalender. Offene Anfragen blockieren nichts. Beim Bestätigen prüft das System, ob sich der Zeitraum mit einer anderen bestätigten Buchung überschneidet.
 
-## 6. Datensicherung
+## 6. Business-Modul (Phase 2)
+
+**Update einer bestehenden Installation:** Einfach alle Dateien erneut hochladen und dabei die Ordner `data/` und `uploads/` **nicht** überschreiben. Die Datenbank wird beim nächsten Aufruf automatisch erweitert; vorhandene Unterkünfte und Buchungen bleiben erhalten. Vorher sicherheitshalber `data/portal.sqlite` herunterladen.
+
+### Firmenkonten
+- Firmen beantragen ein Konto unter **Anmelden → Firmenkonto beantragen** (`/konto/registrieren.php`). Du bekommst eine E-Mail und siehst es im Admin unter **Firmenkonten** mit Status „Beantragt“.
+- Prüfen und auf **Freigeschaltet** stellen. Ab dann werden bestätigte Buchungen dieser Firma per **Sammelrechnung** abgerechnet. Zahlungsziel und Preisobergrenze legst du dort ebenfalls fest.
+- Firmen laden Kolleginnen und Kollegen selbst ein, legen Kostenstellen an und buchen für Mitarbeitende („Name des Gastes“). Gast und buchende Person bekommen beide die E-Mails.
+- **Gesperrt** verhindert die Anmeldung.
+
+### Wochenpendler-Serien
+- Beim Buchen „beruflich“ → **Jede Woche wiederholen**: An- und Abreise der ersten Woche (z. B. Mo–Fr) plus letztes Abreisedatum. Es entsteht je Woche eine eigene Buchung; die Wochenenden bleiben frei.
+- Sind einzelne Wochen belegt, zeigt das Formular sie an; der Gast kann die freien Wochen trotzdem anfragen.
+- Im Admin bestätigst du die **ganze Serie** mit einem Klick (eine E-Mail mit allen Terminen).
+
+### Sammelrechnungen
+- **Sammelrechnungen** → Monat wählen → Vorschau → „Sammelrechnung erstellen“ (oder alle Firmen auf einmal).
+- Aufenthalte über mehrere Monate werden **anteilig nach Nächten** berechnet; die letzte Teilrechnung gleicht Cent-Rundungen aus. Bereits abgerechnete Nächte erscheinen nicht noch einmal.
+- „Per E-Mail ankündigen“ schickt der Firma den Link ins Kundenkonto, wo sie die Rechnung als PDF speichern kann. Zahlungseingang mit „Bezahlt“ markieren; überfällige Rechnungen erscheinen in der Übersicht.
+- Eine Rechnung nur löschen, wenn sie noch nicht verschickt wurde. Sonst bitte mit deiner Steuerberatung eine Storno-/Gutschrift klären.
+
+### Gastgeber-Zugänge
+- **Gastgeber-Zugänge** → Name, E-Mail, Unterkünfte → „Anlegen & Einladung senden“. Der Gastgeber legt sein Passwort über den Link selbst fest. Kommt die E-Mail nicht an, steht der Link auch in der Bestätigungsmeldung.
+- Gastgeber sehen nur ihre eigenen Unterkünfte und Buchungen. Sie können Texte, Preise, Ausstattung, Fotos und Sperrzeiten pflegen und Anfragen bestätigen oder ablehnen. Das Bestätigen kannst du unter **Einstellungen** abschalten.
+- Bei jeder Änderung durch einen Gastgeber bekommst du eine E-Mail.
+
+### Online-Bezahlung
+Ist bewusst nicht eingebaut. Dafür braucht es einen Vertrag mit einem Zahlungsanbieter (z. B. Stripe oder PayPal). Danach lässt sich die Anbindung ergänzen.
+
+## 7. Datensicherung
 
 Alle Daten (Unterkünfte, Buchungen, Einstellungen) stehen in **einer Datei**: `data/portal.sqlite`. Hochgeladene Fotos liegen in `uploads/`.
 Lade beide regelmäßig per SFTP herunter, z. B. einmal pro Woche. Zum Wiederherstellen einfach zurück hochladen.
 
-## 7. Wichtige Hinweise
+## 8. Wichtige Hinweise
 
 - **Preise**: Alle Preise sind Endpreise inklusive Mehrwertsteuer. Ab 28 Nächten gilt der Monatspreis anteilig (1 Monat = 30 Nächte), sofern „Wohnen auf Zeit“ aktiviert ist.
 - **Rechnungen** sind eine Vorlage. Lass Steuersatz und Pflichtangaben von deiner Steuerberatung prüfen, besonders bei Aufenthalten über 6 Monate.
