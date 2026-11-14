@@ -15,6 +15,29 @@ Dauer: etwa 20 Minuten.
 
 ## 2. Dateien hochladen
 
+### Variante A: automatisch über GitHub (empfohlen)
+
+GitHub lädt das Portal nach jeder Änderung selbst zu STRATO hoch. Einmalig einrichten:
+
+1. Im STRATO-Kundenlogin unter **Hosting → SFTP/SSH** (je nach Paket auch „FTP-Zugänge“) die SFTP-Zugangsdaten nachsehen: Server, Benutzername, Passwort.
+2. Auf github.com dein Repository öffnen → **Settings → Secrets and variables → Actions → New repository secret** und diese Einträge anlegen:
+
+   | Name | Inhalt |
+   | --- | --- |
+   | `STRATO_SFTP_HOST` | SFTP-Server, meist `ssh.strato.de` |
+   | `STRATO_SFTP_USER` | SFTP-Benutzername |
+   | `STRATO_SFTP_PASSWORD` | SFTP-Passwort |
+   | `STRATO_REMOTE_DIR` | Zielordner aus Schritt 1, z. B. `/emsquartier` |
+   | `SITE_URL` | optional: Adresse der Seite, z. B. `https://buchen.deine-domain.de` |
+
+   Die Daten liegen dort verschlüsselt; niemand (auch kein Chat) bekommt sie zu sehen.
+3. Unter **Actions → „Portal zu STRATO hochladen“** den letzten Lauf öffnen und **Re-run jobs** klicken, oder einfach auf die nächste Änderung warten.
+4. Grüner Haken = hochgeladen. Mit gesetztem `SITE_URL` prüft der Lauf außerdem, ob die Startseite erreichbar und die Datenbank von außen gesperrt ist.
+
+Die Ordner `data/` (Datenbank) und `uploads/` (Fotos) auf dem Server werden dabei nie gelöscht oder überschrieben.
+
+### Variante B: von Hand
+
 1. Lade den **Inhalt** des Ordners `emsland-portal` per SFTP (z. B. mit FileZilla) oder mit dem STRATO-Dateimanager in den Ordner aus Schritt 2 hoch.
    Wichtig: Auch die versteckten Dateien `.htaccess` (im Hauptordner und in `data`, `inc`, `uploads`) müssen mit hochgeladen werden.
 2. Die Ordner `data` und `uploads` müssen vom Webserver beschreibbar sein. Bei STRATO ist das normalerweise schon so. Falls beim ersten Aufruf ein Fehler kommt: Ordnerrechte auf `755` setzen.

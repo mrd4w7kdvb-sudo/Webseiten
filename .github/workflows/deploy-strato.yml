@@ -1,0 +1,88 @@
+# Lädt das Buchungsportal (Ordner emsland-portal) automatisch per SFTP zu STRATO hoch.
+#
+# Einmalig einrichten: GitHub → Repository → Settings → Secrets and variables → Actions → "New repository secret"
+#   STRATO_SFTP_HOST      SFTP-Server laut STRATO-Kundenlogin (meist ssh.strato.de)
+#   STRATO_SFTP_USER      SFTP-Benutzername laut STRATO-Kundenlogin
+#   STRATO_SFTP_PASSWORD  SFTP-Passwort
+#   STRATO_REMOTE_DIR     Zielordner auf dem Webspace, z. B. /emsquartier
+#   SITE_URL              (optional) Adresse der Seite, z. B. https://buchen.deine-domain.de – wird nach dem Hochladen geprüft
+#
+# Ohne diese Secrets wird nichts hochgeladen (der Lauf endet mit einem Hinweis).
+# Die Ordner data/ (Datenbank) und uploads/ (Fotos) auf dem Server werden nie gelöscht oder überschrieben.
+
+name: Portal zu STRATO hochladen
+
+on:
+  push:
+    branches: [main, claude/eager-sagan-5pzv1m]
+    paths:
+      - 'emsland-portal/**'
+      - '.github/workflows/deploy-strato.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-strato
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prüfen, ob Zugangsdaten hinterlegt sind
+        id: cfg
+        env:
+          HOST: ${{ secrets.STRATO_SFTP_HOST }}
+          USER: ${{ secrets.STRATO_SFTP_USER }}
+          PASS: ${{ secrets.STRATO_SFTP_PASSWORD }}
+          DIR: ${{ secrets.STRATO_REMOTE_DIR }}
+        run: |
+          if [ -n "$HOST" ] && [ -n "$USER" ] && [ -n "$PASS" ] && [ -n "$DIR" ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::STRATO-Zugangsdaten fehlen. Bitte unter Settings → Secrets and variables → Actions die Secrets STRATO_SFTP_HOST, STRATO_SFTP_USER, STRATO_SFTP_PASSWORD und STRATO_REMOTE_DIR anlegen. Es wurde nichts hochgeladen."
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.cfg.outputs.ok == 'true'
+
+      - name: PHP-Dateien auf Syntaxfehler prüfen
+        if: steps.cfg.outputs.ok == 'true'
+        run: |
+          find emsland-portal -name '*.php' -print0 | xargs -0 -n1 php -l > /dev/null
+
+      - name: Hochladen per SFTP
+        if: steps.cfg.outputs.ok == 'true'
+        env:
+          HOST: ${{ secrets.STRATO_SFTP_HOST }}
+          USER: ${{ secrets.STRATO_SFTP_USER }}
+          PASS: ${{ secrets.STRATO_SFTP_PASSWORD }}
+          DIR: ${{ secrets.STRATO_REMOTE_DIR }}
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq lftp > /dev/null
+          # Kein --delete: auf dem Server vorhandene Dateien (Datenbank, Fotos) bleiben erhalten.
+          lftp -u "$USER","$PASS" "sftp://$HOST" <<EOF
+          set sftp:auto-confirm yes
+          set net:max-retries 3
+          set net:timeout 30
+          mkdir -p -f "$DIR"
+          mirror --reverse --verbose --no-perms --parallel=4 \
+            --exclude-glob .gitignore \
+            --exclude-glob data/*.sqlite* \
+            --exclude-glob data/einrichtungscode.txt \
+            emsland-portal/ "$DIR"
+          bye
+          EOF
+
+      - name: Seite nach dem Hochladen prüfen
+        if: steps.cfg.outputs.ok == 'true'
+        env:
+          SITE_URL: ${{ secrets.SITE_URL }}
+        run: |
+          if [ -z "$SITE_URL" ]; then echo "SITE_URL nicht gesetzt – Prüfung übersprungen."; exit 0; fi
+          code=$(curl -s -o /dev/null -w '%{http_code}' -L "$SITE_URL/")
+          echo "Startseite: HTTP $code"
+          [ "$code" = "200" ] || { echo "::error::Die Startseite antwortet mit HTTP $code."; exit 1; }
+          code=$(curl -s -o /dev/null -w '%{http_code}' "$SITE_URL/data/portal.sqlite")
+          echo "Datenbank von außen: HTTP $code (erwartet 403 oder 404)"
+          [ "$code" = "403" ] || [ "$code" = "404" ] || { echo "::error::Die Datenbank ist von außen abrufbar! .htaccess prüfen."; exit 1; }
